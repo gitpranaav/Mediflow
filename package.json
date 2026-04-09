@@ -5,12 +5,35 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "seed:core": "node scripts/seed/01_core.mjs",
+    "seed:icd10": "node scripts/seed/02_icd10.mjs",
+    "seed:demo": "node scripts/seed/03_demo.mjs",
+    "seed:backfill:patients": "node scripts/seed/04_backfill_patient_doctor_id.mjs",
+    "seed:backfill:patient_doctors": "node scripts/seed/05_backfill_patient_doctors.mjs",
+    "seed:demo:history": "node scripts/seed/06_history_demo.mjs",
+    "seed:all": "npm run seed:core && npm run seed:icd10 && npm run seed:demo"
   },
   "dependencies": {
+    "@deepgram/sdk": "^5.0.0",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-toast": "^1.2.15",
+    "@radix-ui/react-tooltip": "^1.2.8",
+    "@supabase/ssr": "^0.10.0",
+    "@supabase/supabase-js": "^2.102.1",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.1",
+    "framer-motion": "^12.38.0",
+    "groq-sdk": "^1.1.2",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^1.7.0",
+    "mongodb": "^6.21.0",
     "next": "16.2.2",
+    "next-themes": "^0.4.6",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "recharts": "^3.8.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
