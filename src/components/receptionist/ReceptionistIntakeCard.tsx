@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/src/components/ui/Button";
@@ -31,28 +31,32 @@ export function ReceptionistIntakeCard({ patients }: ReceptionistIntakeCardProps
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [patientId, setPatientId] = useState<string>("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [chiefComplaint, setChiefComplaint] = useState("");
-  const [bpSystolic, setBpSystolic] = useState("");
-  const [bpDiastolic, setBpDiastolic] = useState("");
-  const [heartRate, setHeartRate] = useState("");
-  const [temperature, setTemperature] = useState("");
-  const [spo2, setSpo2] = useState("");
-  const [weight, setWeight] = useState("");
-  const [height, setHeight] = useState("");
   const [visitType, setVisitType] = useState("General");
   const [priorOptions, setPriorOptions] = useState<PriorConsultationOption[]>([]);
   const [followUpOfId, setFollowUpOfId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const pickerRef = useRef<HTMLDivElement | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return patients;
-    return patients.filter((patient) => patient.name.toLowerCase().includes(q));
+    if (!q) return patients.slice(0, 12);
+    return patients.filter((patient) => patient.name.toLowerCase().includes(q)).slice(0, 12);
   }, [patients, query]);
 
-  const patientOptions = filtered.map((patient) => ({ value: patient.id, label: patient.name }));
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      if (!pickerRef.current) return;
+      if (!pickerRef.current.contains(event.target as Node)) {
+        setPickerOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onPointerDown);
+    return () => window.removeEventListener("mousedown", onPointerDown);
+  }, []);
 
   useEffect(() => {
     if (!patientId) {
@@ -87,11 +91,6 @@ export function ReceptionistIntakeCard({ patients }: ReceptionistIntakeCardProps
     ];
   }, [priorOptions]);
 
-  function toNumber(value: string) {
-    const n = Number(value);
-    return Number.isFinite(n) && value.trim() !== "" ? n : null;
-  }
-
   async function saveIntake() {
     setError(null);
     setSuccess(null);
@@ -119,15 +118,6 @@ export function ReceptionistIntakeCard({ patients }: ReceptionistIntakeCardProps
 
       const snapshot = {
         chief_complaint: chiefComplaint.trim() || null,
-        vitals: {
-          bp_systolic: toNumber(bpSystolic),
-          bp_diastolic: toNumber(bpDiastolic),
-          heart_rate: toNumber(heartRate),
-          temperature: toNumber(temperature),
-          spo2: toNumber(spo2),
-          weight: toNumber(weight),
-          height: toNumber(height),
-        },
       };
 
       const emrRes = await fetch(`/api/emr/by-consultation/${createData.consultation_id}`, {
@@ -149,13 +139,8 @@ export function ReceptionistIntakeCard({ patients }: ReceptionistIntakeCardProps
 
       setSuccess("Intake saved. Doctor can continue this consultation.");
       setChiefComplaint("");
-      setBpSystolic("");
-      setBpDiastolic("");
-      setHeartRate("");
-      setTemperature("");
-      setSpo2("");
-      setWeight("");
-      setHeight("");
+      const selected = patients.find((patient) => patient.id === patientId);
+      setQuery(selected?.name ?? "");
       router.refresh();
     } catch {
       setError("Failed to save intake details.");
@@ -168,23 +153,44 @@ export function ReceptionistIntakeCard({ patients }: ReceptionistIntakeCardProps
     <Card>
       <CardHeader>
         <CardTitle>Reception Intake</CardTitle>
-        <CardDescription>Capture vitals and chief complaint before doctor starts.</CardDescription>
+        <CardDescription>Select patient and chief complaint before doctor starts.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        <Input
-          label="Search patient"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Type patient name"
-        />
-        <div className="space-y-1.5">
-          <p className="text-sm font-medium text-[hsl(var(--text-secondary))]">Patient</p>
-          <Select
-            value={patientId}
-            onValueChange={setPatientId}
-            options={patientOptions}
-            placeholder={patientOptions.length ? "Select patient" : "No patient matches search"}
+        <div className="space-y-1.5" ref={pickerRef}>
+          <Input
+            label="Patient"
+            value={query}
+            onFocus={() => setPickerOpen(true)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPatientId("");
+              setPickerOpen(true);
+            }}
+            placeholder="Search and select patient"
           />
+          {pickerOpen ? (
+            <div className="max-h-56 overflow-auto rounded-[calc(var(--radius)-2px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-1">
+              {filtered.length ? (
+                filtered.map((patient) => (
+                  <button
+                    key={patient.id}
+                    type="button"
+                    className="flex w-full items-center justify-between rounded-[calc(var(--radius)-4px)] px-2 py-2 text-left text-sm text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-secondary))]"
+                    onClick={() => {
+                      setPatientId(patient.id);
+                      setQuery(patient.name);
+                      setPickerOpen(false);
+                    }}
+                  >
+                    <span>{patient.name}</span>
+                  </button>
+                ))
+              ) : (
+                <p className="px-2 py-2 text-xs text-[hsl(var(--text-muted))]">No patient matches search</p>
+              )}
+            </div>
+          ) : null}
+          {patientId ? <p className="text-xs text-[hsl(var(--text-muted))]">Selected patient ready</p> : null}
         </div>
         <Select value={visitType} onValueChange={setVisitType} options={consultationTypeOptions} placeholder="Visit type" />
         {patientId && priorOptions.length ? (
@@ -204,15 +210,6 @@ export function ReceptionistIntakeCard({ patients }: ReceptionistIntakeCardProps
           onChange={(event) => setChiefComplaint(event.target.value)}
           placeholder="Fever since 2 days"
         />
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Input type="number" label="BP Systolic" value={bpSystolic} onChange={(e) => setBpSystolic(e.target.value)} />
-          <Input type="number" label="BP Diastolic" value={bpDiastolic} onChange={(e) => setBpDiastolic(e.target.value)} />
-          <Input type="number" label="Heart Rate" value={heartRate} onChange={(e) => setHeartRate(e.target.value)} />
-          <Input type="number" label="Temperature" value={temperature} onChange={(e) => setTemperature(e.target.value)} />
-          <Input type="number" label="SpO2" value={spo2} onChange={(e) => setSpo2(e.target.value)} />
-          <Input type="number" label="Weight" value={weight} onChange={(e) => setWeight(e.target.value)} />
-          <Input type="number" label="Height" value={height} onChange={(e) => setHeight(e.target.value)} />
-        </div>
         {error ? <p className="text-xs text-[hsl(var(--danger))]">{error}</p> : null}
         {success ? <p className="text-xs text-[hsl(var(--success))]">{success}</p> : null}
         <Button onClick={saveIntake} loading={loading}>
