@@ -46,6 +46,41 @@ function normalizeMedicationNames(medications: unknown): string[] {
     .filter(Boolean);
 }
 
+function normalizeSnapshotMedications(snapshot: unknown): string[] {
+  if (!snapshot || typeof snapshot !== "object") return [];
+  const source = (snapshot as { medications?: unknown }).medications;
+  return normalizeMedicationNames(source);
+}
+
+function normalizeSnapshotDiagnoses(snapshot: unknown): Array<{ code: string; description: string }> {
+  if (!snapshot || typeof snapshot !== "object") return [];
+
+  const diagnosisIcd = (snapshot as { diagnosis_icd?: unknown }).diagnosis_icd;
+  if (Array.isArray(diagnosisIcd) && diagnosisIcd.length) {
+    const mapped = diagnosisIcd
+      .map((row) => {
+        if (!row || typeof row !== "object") return null;
+        const code = String((row as { icd10_code?: unknown }).icd10_code ?? "").trim();
+        const description = String(
+          (row as { icd10_description?: unknown; diagnosis?: unknown }).icd10_description ??
+            (row as { diagnosis?: unknown }).diagnosis ??
+            ""
+        ).trim();
+        if (!code && !description) return null;
+        return { code: code || "Dx", description: description || "Diagnosis" };
+      })
+      .filter((row): row is { code: string; description: string } => Boolean(row));
+    if (mapped.length) return mapped;
+  }
+
+  const diagnosisText = (snapshot as { diagnosis_text?: unknown }).diagnosis_text;
+  if (!Array.isArray(diagnosisText)) return [];
+  return diagnosisText
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean)
+    .map((text) => ({ code: "Dx", description: text }));
+}
+
 export default async function PatientDetailPage({ params }: DetailPageProps) {
   const { id } = await params;
   const { db, session } = await getServerContext();
@@ -105,20 +140,60 @@ export default async function PatientDetailPage({ params }: DetailPageProps) {
     prescriptionByConsultation.set(key, current);
   }
 
-  const history = (consultations as Array<{
+  type ConsultationRow = {
     _id: ObjectId;
     created_at: string;
-  }>).map((consultation) => {
+    type?: string;
+    status?: string;
+    follow_up_of?: ObjectId | null;
+  };
+
+  const consultationById = new Map((consultations as ConsultationRow[]).map((c) => [c._id.toString(), c]));
+
+  const history = (consultations as ConsultationRow[]).map((consultation) => {
     const consultationId = consultation._id.toString();
-    const emr = emrByConsultation.get(consultationId);
-    const meds = (prescriptionByConsultation.get(consultationId) ?? []).flatMap((item) => normalizeMedicationNames(item.medications));
+    const emr = emrByConsultation.get(consultationId) as
+      | {
+          _id: ObjectId;
+          chief_complaint?: string | null;
+          assessment?: string | null;
+          clinical_summary?: string | null;
+          snapshot?: {
+            chief_complaint?: string | null;
+            assessment?: string | null;
+            clinical_summary?: string | null;
+            medications?: unknown;
+            diagnosis_icd?: unknown;
+            diagnosis_text?: unknown;
+          };
+        }
+      | undefined;
+    const medsFromPrescription = (prescriptionByConsultation.get(consultationId) ?? []).flatMap((item) => normalizeMedicationNames(item.medications));
+    const snap = emr?.snapshot;
+    const meds = medsFromPrescription.length ? medsFromPrescription : normalizeSnapshotMedications(snap);
+    const diagnosed = emr ? diagnosisMap.get(emr._id.toString()) ?? [] : [];
+    const diagnoses = diagnosed.length ? diagnosed : normalizeSnapshotDiagnoses(snap);
+    const followKey = consultation.follow_up_of?.toString();
+    const prior = followKey ? consultationById.get(followKey) : undefined;
     return {
       consultationId,
       createdAt: consultation.created_at,
-      chiefComplaint: emr?.chief_complaint ?? null,
-      assessment: emr?.assessment ?? null,
-      clinicalSummary: emr?.clinical_summary ?? null,
-      diagnoses: emr ? diagnosisMap.get(emr._id.toString()) ?? [] : [],
+      visitType: consultation.type ?? "General",
+      status: consultation.status ?? null,
+      followUpOfId: followKey ?? null,
+      followUpOfLabel: prior
+        ? new Date(prior.created_at).toLocaleString("en-IN", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : null,
+      chiefComplaint: snap?.chief_complaint ?? emr?.chief_complaint ?? null,
+      assessment: snap?.assessment ?? emr?.assessment ?? null,
+      clinicalSummary: snap?.clinical_summary ?? emr?.clinical_summary ?? null,
+      diagnoses,
       medications: meds,
     };
   });

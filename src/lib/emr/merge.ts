@@ -1,24 +1,38 @@
-import type { EMROp, EMRSnapshot } from "@/src/lib/emr/types";
+import type { EMRMedication, EMROp, EMRSnapshot } from "@/src/lib/emr/types";
+
+import { normalizeMedicationsArray } from "./normalizeMedications";
 
 function ensureArray(value: unknown): unknown[] {
   if (Array.isArray(value)) return value;
   return [];
 }
 
-function parsePath(path: string): Array<string | number> {
-  // Very small JSONPath-like parser: "vitals.bp_systolic" or "symptoms[0]"
+/** Parse paths like vitals.bp_systolic, medications[0], medications[0].dosage */
+export function parsePath(path: string): Array<string | number> {
   const out: Array<string | number> = [];
   const parts = path.split(".").filter(Boolean);
   for (const part of parts) {
-    const match = part.match(/^([a-zA-Z0-9_]+)(\\[(\\d+)\\])?$/);
-    if (!match) {
-      out.push(part);
+    const bracketed = part.match(/^([a-zA-Z0-9_]+)\[(\d+)\]$/);
+    if (bracketed) {
+      out.push(bracketed[1], Number(bracketed[2]));
       continue;
     }
-    out.push(match[1]);
-    if (match[3]) out.push(Number(match[3]));
+    out.push(part);
   }
   return out;
+}
+
+function emptyMedSlot(): EMRMedication {
+  return {
+    name: "",
+    dosage: "",
+    frequency: "",
+    duration: "",
+    route: "",
+    instructions: "",
+    icd10_code: "",
+    icd10_description: "",
+  };
 }
 
 function setAtPath(root: any, path: string, value: unknown) {
@@ -50,7 +64,7 @@ function deleteAtPath(root: any, path: string) {
   let obj = root;
   for (let i = 0; i < keys.length - 1; i += 1) {
     const k = keys[i];
-    obj = obj?.[k as any];
+    obj = obj?.[k as keyof typeof obj];
     if (obj == null) return;
   }
   const last = keys[keys.length - 1];
@@ -61,6 +75,27 @@ function deleteAtPath(root: any, path: string) {
   }
 }
 
+function coerceMedPartial(partial: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(partial)) {
+    if (v === undefined || v === null) continue;
+    const s = typeof v === "string" ? v.trim() : String(v).trim();
+    if (!s) continue;
+    out[k] = s;
+  }
+  return out;
+}
+
+function mergeMedicationIndex(root: EMRSnapshot, index: number, partial: Record<string, unknown>) {
+  if (!Array.isArray(root.medications)) root.medications = [];
+  while (root.medications.length <= index) {
+    root.medications.push(emptyMedSlot());
+  }
+  const prev = root.medications[index] ?? emptyMedSlot();
+  const coerced = coerceMedPartial(partial);
+  root.medications[index] = { ...prev, ...coerced } as EMRMedication;
+}
+
 export function applyEMROps(snapshot: EMRSnapshot | null | undefined, ops: EMROp[]) {
   const next: EMRSnapshot = JSON.parse(JSON.stringify(snapshot ?? {}));
   const needs = new Set<string>(ensureArray(next.needs_confirmation).filter((x) => typeof x === "string") as string[]);
@@ -68,8 +103,20 @@ export function applyEMROps(snapshot: EMRSnapshot | null | undefined, ops: EMROp
   for (const op of ops ?? []) {
     if (!op || typeof op !== "object") continue;
     if (op.op === "set_fact" || op.op === "update_fact") {
+      const medWhole = op.path.match(/^medications\[(\d+)\]$/);
+      if (medWhole && op.value && typeof op.value === "object" && !Array.isArray(op.value)) {
+        mergeMedicationIndex(next, Number(medWhole[1]), op.value as Record<string, unknown>);
+        needs.delete(op.path);
+        continue;
+      }
+
+      if (op.op === "set_fact" && op.path === "medications" && Array.isArray(op.value)) {
+        next.medications = normalizeMedicationsArray(op.value);
+        needs.delete(op.path);
+        continue;
+      }
+
       setAtPath(next as any, op.path, op.value);
-      // If we have a value now, remove from needs_confirmation (best-effort).
       needs.delete(op.path);
       continue;
     }
@@ -86,4 +133,3 @@ export function applyEMROps(snapshot: EMRSnapshot | null | undefined, ops: EMROp
   next.needs_confirmation = Array.from(needs);
   return next;
 }
-

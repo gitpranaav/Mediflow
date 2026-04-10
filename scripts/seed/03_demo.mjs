@@ -76,6 +76,7 @@ for (let i = 0; i < Math.min(3, patientDocs.length); i += 1) {
     patient_id: patientDocs[i]._id,
     type: "General",
     status: "completed",
+    follow_up_of: null,
     started_at: now.toISOString(),
     ended_at: new Date(now.getTime() + 25 * 60 * 1000).toISOString(),
     created_at: now.toISOString(),

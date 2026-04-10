@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { Badge } from "@/src/components/ui/Badge";
@@ -19,6 +20,10 @@ interface PatientInfo {
 interface HistoryItem {
   consultationId: string;
   createdAt: string;
+  visitType: string;
+  status: string | null;
+  followUpOfId: string | null;
+  followUpOfLabel: string | null;
   chiefComplaint: string | null;
   assessment: string | null;
   clinicalSummary: string | null;
@@ -41,6 +46,13 @@ function formatDate(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function visitTypeBadgeVariant(t: string): "danger" | "warning" | "info" | "outline" {
+  if (t === "Emergency") return "danger";
+  if (t === "Follow-up") return "warning";
+  if (t === "Teleconsult") return "info";
+  return "outline";
 }
 
 export function PatientDetailTabs({ patient, history }: DetailTabsProps) {
@@ -107,9 +119,27 @@ export function PatientDetailTabs({ patient, history }: DetailTabsProps) {
                 <details key={item.consultationId} className="rounded-[var(--radius)] border border-[hsl(var(--border))] p-3">
                   <summary className="cursor-pointer list-none">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-[hsl(var(--text-primary))]">{formatDate(item.createdAt)}</p>
-                      <p className="text-xs text-[hsl(var(--text-muted))]">{item.chiefComplaint ?? "General consultation"}</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium text-[hsl(var(--text-primary))]">{formatDate(item.createdAt)}</p>
+                        <Badge variant={visitTypeBadgeVariant(item.visitType)}>{item.visitType}</Badge>
+                        {item.status ? <Badge variant="outline">{item.status}</Badge> : null}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-xs text-[hsl(var(--text-muted))]">{item.chiefComplaint ?? "—"}</p>
+                        <Link
+                          href={`/doctor/consultation/${item.consultationId}`}
+                          className="text-xs font-medium text-[hsl(var(--accent))] underline-offset-2 hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          Open visit
+                        </Link>
+                      </div>
                     </div>
+                    {item.followUpOfId ? (
+                      <p className="mt-2 text-xs text-[hsl(var(--text-muted))]">
+                        Follow-up of {item.followUpOfLabel ?? `visit ${item.followUpOfId.slice(0, 8)}…`}
+                      </p>
+                    ) : null}
                   </summary>
                   <div className="mt-3 space-y-2 text-sm">
                     <p className="text-[hsl(var(--text-secondary))]">

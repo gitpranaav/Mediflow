@@ -35,9 +35,12 @@ export default async function ConsultationPage({ params }: ConsultationPageProps
   } as ConsultationRecord;
   if (!consultation) notFound();
 
+  const patientId = consultationDoc.patient_id ? consultationDoc.patient_id.toString() : null;
+
   return (
     <ConsultationWorkspace
       consultationId={consultation.id}
+      patientId={patientId}
       patientName={consultation.patients?.name ?? "Unknown Patient"}
       consultationType={consultation.type ?? "General"}
       initialStartedAt={consultation.started_at}

@@ -1,7 +1,8 @@
 "use client";
 
-import { Clock3 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Clock3, Printer } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/src/components/ui/Badge";
 import { Button } from "@/src/components/ui/Button";
@@ -15,9 +16,31 @@ import type { EMRSnapshot, TranscriptSegment } from "@/src/lib/emr/types";
 
 interface WorkspaceProps {
   consultationId: string;
+  patientId: string | null;
   patientName: string;
   consultationType: string;
   initialStartedAt: string | null;
+}
+
+function normalize(value: string) {
+  return value.toLowerCase().trim();
+}
+
+function detectRealtimeAllergyAlert(allergies: string[], liveTranscript: string): string | null {
+  const text = normalize(liveTranscript);
+  if (!text) return null;
+
+  const allergyBlob = allergies.map((item) => normalize(String(item))).filter(Boolean).join(" ");
+  if (!allergyBlob) return null;
+
+  const hasPenicillinAllergy = /penicillin|pcn|beta[-\s]?lactam|β[-\s]?lactam/.test(allergyBlob);
+  const mentionsPenicillinFamily = /penic[a-z]*|amoxi[a-z]*|ampi[a-z]*|piper[a-z]*|augmentin|clavulanate|cef[a-z]+/.test(text);
+
+  if (hasPenicillinAllergy && mentionsPenicillinFamily) {
+    return "Live allergy alert: beta-lactam/penicillin family drug mentioned in transcript. Verify before prescribing.";
+  }
+
+  return null;
 }
 
 function formatElapsed(seconds: number) {
@@ -35,21 +58,27 @@ function formatElapsed(seconds: number) {
 
 export function ConsultationWorkspace({
   consultationId,
+  patientId,
   patientName,
   consultationType,
   initialStartedAt,
 }: WorkspaceProps) {
   const [syncText, setSyncText] = useState("Sync pending");
+  const [isEnded, setIsEnded] = useState(false);
   const [patientAllergies, setPatientAllergies] = useState<string[]>([]);
   const [emrSnapshot, setEmrSnapshot] = useState<EMRSnapshot>({});
   const [cursor, setCursor] = useState<{ last_final_segment_id?: string | null; last_final_index?: number | null } | null>(null);
   const extractingRef = useRef(false);
   const emrSnapshotRef = useRef<EMRSnapshot>({});
   const cursorRef = useRef<typeof cursor>(null);
+  const sttSegmentsRef = useRef<TranscriptSegment[]>([]);
+  const patientAllergiesRef = useRef<string[]>([]);
   emrSnapshotRef.current = emrSnapshot;
   cursorRef.current = cursor;
+  patientAllergiesRef.current = patientAllergies;
 
   const stt = useSTT({ consultationId });
+  sttSegmentsRef.current = (stt.segments ?? []) as TranscriptSegment[];
 
   const startedAt = useMemo(
     () => new Date(initialStartedAt ?? new Date().toISOString()),
@@ -108,22 +137,23 @@ export function ConsultationWorkspace({
     };
   }, [consultationId]);
 
-  useEffect(() => {
-    // Auto delta extraction when new final segments arrive (refs avoid resetting the debounce on every EMR update)
-    const finalSegments = (stt.segments ?? []).filter((s: any) => s?.is_final) as TranscriptSegment[];
-    if (!finalSegments.length) return;
-
-    const c = cursorRef.current;
-    const lastProcessedId = c?.last_final_segment_id ?? null;
-    const startIndex = lastProcessedId ? finalSegments.findIndex((s) => s.id === lastProcessedId) + 1 : 0;
-    const delta = startIndex >= 0 ? finalSegments.slice(startIndex) : finalSegments;
-
-    if (!delta.length) return;
+  const processDeltaExtraction = useCallback(async () => {
     if (extractingRef.current) return;
-
     extractingRef.current = true;
-    const t = setTimeout(async () => {
-      try {
+
+    try {
+      // Drain all newly finalized segments so EMR updates keep up while speaking.
+      while (true) {
+        const finalSegments = (sttSegmentsRef.current ?? []).filter((s) => s?.is_final) as TranscriptSegment[];
+        if (!finalSegments.length) break;
+
+        const c = cursorRef.current;
+        const lastProcessedId = c?.last_final_segment_id ?? null;
+        const startIndex = lastProcessedId ? finalSegments.findIndex((s) => s.id === lastProcessedId) + 1 : 0;
+        const delta = startIndex >= 0 ? finalSegments.slice(startIndex) : finalSegments;
+
+        if (!delta.length) break;
+
         const res = await fetch("/api/emr/extract-delta", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -132,19 +162,39 @@ export function ConsultationWorkspace({
             segments_delta: delta,
             emr_snapshot: emrSnapshotRef.current,
             cursor: cursorRef.current,
+            patient_allergies: patientAllergiesRef.current,
           }),
         });
         const data = await res.json();
         if (res.ok) {
-          if (data?.snapshot) setEmrSnapshot(data.snapshot);
-          if (data?.new_cursor) setCursor(data.new_cursor);
+          if (data?.snapshot) {
+            emrSnapshotRef.current = data.snapshot;
+            setEmrSnapshot(data.snapshot);
+          }
+          if (data?.new_cursor) {
+            cursorRef.current = data.new_cursor;
+            setCursor(data.new_cursor);
+          }
+        } else {
+          window.setTimeout(() => {
+            void processDeltaExtraction();
+          }, 1200);
+          break;
         }
-      } finally {
-        extractingRef.current = false;
       }
-    }, 1500);
-    return () => clearTimeout(t);
-  }, [consultationId, stt.segments]);
+    } finally {
+      extractingRef.current = false;
+    }
+  }, [consultationId]);
+
+  useEffect(() => {
+    void processDeltaExtraction();
+  }, [processDeltaExtraction, stt.segments]);
+
+  const liveAllergyAlert = useMemo(
+    () => detectRealtimeAllergyAlert(patientAllergies, `${stt.fullText ?? ""} ${stt.interimText ?? ""}`),
+    [patientAllergies, stt.fullText, stt.interimText]
+  );
 
   const endConsultation = async () => {
     // Persist latest transcript before finalize
@@ -163,11 +213,15 @@ export function ConsultationWorkspace({
 
     // Final full-context extraction pass (optional but improves summary quality).
     if (stt.fullText?.trim()) {
-      await fetch("/api/emr/extract", {
+      const extractRes = await fetch("/api/emr/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ consultation_id: consultationId, transcript_text: stt.fullText }),
       });
+      const extractData = await extractRes.json();
+      if (extractRes.ok && extractData?.snapshot) {
+        setEmrSnapshot(extractData.snapshot);
+      }
     }
     await fetch(`/api/consultations/${consultationId}`, {
       method: "PATCH",
@@ -178,6 +232,7 @@ export function ConsultationWorkspace({
     const emrJson = await emrRes.json();
     if (emrRes.ok && emrJson?.emr_entry?.snapshot) setEmrSnapshot(emrJson.emr_entry.snapshot);
     setSyncText("Consultation finalized");
+    setIsEnded(true);
   };
 
   return (
@@ -187,6 +242,14 @@ export function ConsultationWorkspace({
           <div>
             <p className="text-sm text-[hsl(var(--text-muted))]">Patient</p>
             <h2 className="text-lg font-semibold text-[hsl(var(--text-primary))]">{patientName}</h2>
+            {patientId ? (
+              <Link
+                href={`/doctor/patients/${patientId}`}
+                className="text-xs font-medium text-[hsl(var(--accent))] underline-offset-2 hover:underline"
+              >
+                Open consultation history
+              </Link>
+            ) : null}
           </div>
           <div className="flex items-center gap-2">
             <Badge variant="info">{consultationType}</Badge>
@@ -194,9 +257,17 @@ export function ConsultationWorkspace({
               <Clock3 className="mr-1 h-3.5 w-3.5" />
               {formatElapsed(elapsed)}
             </Badge>
-            <Button variant="danger" onClick={endConsultation}>
+            <Button variant="danger" onClick={endConsultation} disabled={isEnded}>
               End Consultation
             </Button>
+            {isEnded && (
+              <Link href={`/doctor/consultations/${String(consultationId)}/prescription`} target="_blank">
+                <Button variant="primary">
+                  <Printer className="mr-2 h-4 w-4" />
+                  Print Prescription
+                </Button>
+              </Link>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -224,6 +295,7 @@ export function ConsultationWorkspace({
                 snapshot={emrSnapshot}
                 onChangeSnapshot={setEmrSnapshot}
                 patientAllergies={patientAllergies}
+                liveAllergyAlert={liveAllergyAlert}
               />
             </div>
           </CardContent>

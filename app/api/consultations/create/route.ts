@@ -3,12 +3,15 @@ import { NextResponse } from "next/server";
 
 import { getServerSession } from "@/src/lib/auth/session";
 import { getDb } from "@/src/lib/mongodb/client";
+import { normalizeConsultationType } from "@/src/lib/consultations/visitTypes";
 
 interface CreateConsultationBody {
   patient_id?: string;
   type?: string;
   chief_complaint?: string;
   doctor_id?: string;
+  /** Optional prior visit this consultation follows (same patient + doctor). */
+  follow_up_of?: string;
 }
 
 export async function POST(request: Request) {
@@ -23,15 +26,46 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "patient_id is required." }, { status: 400 });
   }
 
+  const doctorObjectId = new ObjectId(session.uid);
+  if (body.doctor_id && body.doctor_id !== session.uid) {
+    return NextResponse.json({ error: "doctor_id does not match the signed-in practice." }, { status: 403 });
+  }
+
+  const patientObjectId = new ObjectId(body.patient_id);
   const db = await getDb();
+
+  const link = await db.collection("patient_doctors").findOne({ patient_id: patientObjectId, doctor_id: doctorObjectId });
+  if (!link) {
+    return NextResponse.json({ error: "Patient is not linked to this doctor." }, { status: 403 });
+  }
+
+  let followUpOfId: ObjectId | undefined;
+  if (body.follow_up_of?.trim()) {
+    if (!ObjectId.isValid(body.follow_up_of.trim())) {
+      return NextResponse.json({ error: "Invalid follow_up_of consultation id." }, { status: 400 });
+    }
+    followUpOfId = new ObjectId(body.follow_up_of.trim());
+    const prior = await db.collection("consultations").findOne({
+      _id: followUpOfId,
+      patient_id: patientObjectId,
+      doctor_id: doctorObjectId,
+    });
+    if (!prior) {
+      return NextResponse.json({ error: "Prior consultation not found for this patient." }, { status: 400 });
+    }
+  }
+
   const now = new Date().toISOString();
   const role = String(session.role);
+  const visitType = normalizeConsultationType(body.type);
+
   const inserted = await db.collection("consultations").insertOne({
-    doctor_id: new ObjectId(session.uid),
-    patient_id: new ObjectId(body.patient_id),
-    type: body.type ?? "General",
+    doctor_id: doctorObjectId,
+    patient_id: patientObjectId,
+    type: visitType,
     status: "active",
     started_at: now,
+    follow_up_of: followUpOfId ?? null,
     intake_status: role === "receptionist" ? "done" : "not_required",
     intake_by: new ObjectId(session.uid),
     intake_by_role: role,

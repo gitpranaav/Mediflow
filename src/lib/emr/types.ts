@@ -25,11 +25,19 @@ export type EMRMedication = {
   confidence?: Confidence;
 };
 
+export type EMRDiagnosisIcd = {
+  diagnosis: string;
+  icd10_code?: string | null;
+  icd10_description?: string | null;
+  confidence?: Confidence;
+};
+
 export type EMRSnapshot = {
   vitals?: EMRVitals;
   chief_complaint?: string | null;
   symptoms?: string[];
   diagnosis_text?: string[];
+  diagnosis_icd?: EMRDiagnosisIcd[];
   medications?: EMRMedication[];
   lab_tests_ordered?: string[];
   clinical_summary?: string | null;

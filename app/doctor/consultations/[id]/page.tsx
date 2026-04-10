@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { ObjectId } from "mongodb";
+import Link from "next/link";
 
 import { Button } from "@/src/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/Card";
@@ -37,11 +38,20 @@ export default async function ConsultationDetailPage({ params }: { params: Promi
           <p><strong>Date:</strong> {new Date(data.created_at).toLocaleString("en-IN")}</p>
           <p><strong>Status:</strong> {data.status}</p>
           <p><strong>Clinical summary:</strong> {data.emr_entries?.[0]?.clinical_summary ?? "N/A"}</p>
+          <p><strong>Patient summary:</strong> {data.emr_entries?.[0]?.snapshot?.patient_summary ?? "N/A"}</p>
           <details>
             <summary className="cursor-pointer">Transcript</summary>
             <p className="mt-2 whitespace-pre-wrap text-sm">{data.transcripts?.[0]?.raw_text ?? "No transcript"}</p>
           </details>
-          <Button variant="secondary">Export PDF (step 15 hook ready)</Button>
+          <div className="flex flex-wrap gap-2 pt-2">
+            <Link
+              href={`/doctor/consultations/${String(data._id)}/prescription`}
+              className="inline-flex h-10 items-center justify-center rounded-[calc(var(--radius)-2px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-secondary))] px-4 text-sm font-medium text-[hsl(var(--text-primary))] shadow-[var(--shadow-sm)] hover:bg-[hsl(var(--bg-card))]"
+            >
+              Print Prescription
+            </Link>
+            <Button variant="secondary">Export PDF (step 15 hook ready)</Button>
+          </div>
         </CardContent>
       </Card>
     </div>

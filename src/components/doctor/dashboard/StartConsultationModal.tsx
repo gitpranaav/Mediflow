@@ -1,7 +1,7 @@
 "use client";
 
 import { Search, Stethoscope } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { Avatar } from "@/src/components/ui/Avatar";
@@ -9,6 +9,9 @@ import { Button } from "@/src/components/ui/Button";
 import { Input } from "@/src/components/ui/Input";
 import { Modal } from "@/src/components/ui/Modal";
 import { Select } from "@/src/components/ui/Select";
+import { consultationTypeOptions } from "@/src/lib/consultations/visitTypes";
+
+const FOLLOW_NONE = "_none";
 
 interface PatientOption {
   id: string;
@@ -17,17 +20,17 @@ interface PatientOption {
   gender: string | null;
 }
 
+interface PriorConsultationOption {
+  id: string;
+  created_at: string;
+  type: string;
+  chief_complaint: string | null;
+}
+
 interface StartConsultationModalProps {
   doctorId: string;
   patients: PatientOption[];
 }
-
-const consultationTypeOptions = [
-  { value: "General", label: "General" },
-  { value: "Follow-up", label: "Follow-up" },
-  { value: "Emergency", label: "Emergency" },
-  { value: "Teleconsult", label: "Teleconsult" },
-];
 
 export function StartConsultationModal({ doctorId, patients }: StartConsultationModalProps) {
   const router = useRouter();
@@ -37,6 +40,8 @@ export function StartConsultationModal({ doctorId, patients }: StartConsultation
   const [selectedPatientId, setSelectedPatientId] = useState<string | undefined>();
   const [consultationType, setConsultationType] = useState("General");
   const [chiefComplaint, setChiefComplaint] = useState("");
+  const [priorOptions, setPriorOptions] = useState<PriorConsultationOption[]>([]);
+  const [followUpOfId, setFollowUpOfId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,6 +50,39 @@ export function StartConsultationModal({ doctorId, patients }: StartConsultation
     if (!query) return patients;
     return patients.filter((patient) => patient.name.toLowerCase().includes(query));
   }, [patients, search]);
+
+  useEffect(() => {
+    if (!selectedPatientId) {
+      setPriorOptions([]);
+      setFollowUpOfId("");
+      return;
+    }
+    setFollowUpOfId("");
+    setPriorOptions([]);
+    let cancelled = false;
+    (async () => {
+      const res = await fetch(`/api/patients/${selectedPatientId}/consultations`);
+      const data = (await res.json()) as { consultations?: PriorConsultationOption[] };
+      if (cancelled) return;
+      if (res.ok && Array.isArray(data.consultations)) setPriorOptions(data.consultations);
+      else setPriorOptions([]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPatientId]);
+
+  const followUpSelectOptions = useMemo(() => {
+    return [
+      { value: FOLLOW_NONE, label: "None (new episode)" },
+      ...priorOptions.map((c) => {
+        const d = new Date(c.created_at);
+        const dateLabel = Number.isNaN(d.getTime()) ? c.created_at : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+        const tail = c.chief_complaint?.trim() ? ` — ${c.chief_complaint.trim().slice(0, 48)}` : "";
+        return { value: c.id, label: `${dateLabel} · ${c.type}${tail}` };
+      }),
+    ];
+  }, [priorOptions]);
 
   const startSession = async () => {
     if (!selectedPatientId) {
@@ -63,6 +101,7 @@ export function StartConsultationModal({ doctorId, patients }: StartConsultation
           patient_id: selectedPatientId,
           type: consultationType,
           chief_complaint: chiefComplaint.trim() || undefined,
+          follow_up_of: followUpOfId.trim() || undefined,
         }),
       });
       const result = (await response.json()) as { consultation_id?: string; error?: string };
@@ -143,6 +182,15 @@ export function StartConsultationModal({ doctorId, patients }: StartConsultation
         </div>
 
         <Select value={consultationType} onValueChange={setConsultationType} options={consultationTypeOptions} />
+
+        {selectedPatientId && priorOptions.length ? (
+          <Select
+            value={followUpOfId || FOLLOW_NONE}
+            onValueChange={(v) => setFollowUpOfId(v === FOLLOW_NONE ? "" : v)}
+            options={followUpSelectOptions}
+            placeholder="Link to prior visit (optional)"
+          />
+        ) : null}
 
         <Input
           value={chiefComplaint}

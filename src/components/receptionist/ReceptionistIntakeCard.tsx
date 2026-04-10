@@ -1,12 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/src/components/ui/Button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/src/components/ui/Card";
 import { Input } from "@/src/components/ui/Input";
 import { Select } from "@/src/components/ui/Select";
+import { consultationTypeOptions } from "@/src/lib/consultations/visitTypes";
+
+const FOLLOW_NONE = "_none";
+
+interface PriorConsultationOption {
+  id: string;
+  created_at: string;
+  type: string;
+  chief_complaint: string | null;
+}
 
 interface PatientOption {
   id: string;
@@ -29,6 +39,9 @@ export function ReceptionistIntakeCard({ patients }: ReceptionistIntakeCardProps
   const [spo2, setSpo2] = useState("");
   const [weight, setWeight] = useState("");
   const [height, setHeight] = useState("");
+  const [visitType, setVisitType] = useState("General");
+  const [priorOptions, setPriorOptions] = useState<PriorConsultationOption[]>([]);
+  const [followUpOfId, setFollowUpOfId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -40,6 +53,39 @@ export function ReceptionistIntakeCard({ patients }: ReceptionistIntakeCardProps
   }, [patients, query]);
 
   const patientOptions = filtered.map((patient) => ({ value: patient.id, label: patient.name }));
+
+  useEffect(() => {
+    if (!patientId) {
+      setPriorOptions([]);
+      setFollowUpOfId("");
+      return;
+    }
+    setFollowUpOfId("");
+    setPriorOptions([]);
+    let cancelled = false;
+    (async () => {
+      const res = await fetch(`/api/patients/${patientId}/consultations`);
+      const data = (await res.json()) as { consultations?: PriorConsultationOption[] };
+      if (cancelled) return;
+      if (res.ok && Array.isArray(data.consultations)) setPriorOptions(data.consultations);
+      else setPriorOptions([]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId]);
+
+  const followUpSelectOptions = useMemo(() => {
+    return [
+      { value: FOLLOW_NONE, label: "None (new episode)" },
+      ...priorOptions.map((c) => {
+        const d = new Date(c.created_at);
+        const dateLabel = Number.isNaN(d.getTime()) ? c.created_at : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+        const tail = c.chief_complaint?.trim() ? ` — ${c.chief_complaint.trim().slice(0, 48)}` : "";
+        return { value: c.id, label: `${dateLabel} · ${c.type}${tail}` };
+      }),
+    ];
+  }, [priorOptions]);
 
   function toNumber(value: string) {
     const n = Number(value);
@@ -60,8 +106,9 @@ export function ReceptionistIntakeCard({ patients }: ReceptionistIntakeCardProps
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           patient_id: patientId,
-          type: "General",
+          type: visitType,
           chief_complaint: chiefComplaint.trim() || undefined,
+          follow_up_of: followUpOfId.trim() || undefined,
         }),
       });
       const createData = (await createRes.json()) as { consultation_id?: string; error?: string };
@@ -139,6 +186,18 @@ export function ReceptionistIntakeCard({ patients }: ReceptionistIntakeCardProps
             placeholder={patientOptions.length ? "Select patient" : "No patient matches search"}
           />
         </div>
+        <Select value={visitType} onValueChange={setVisitType} options={consultationTypeOptions} placeholder="Visit type" />
+        {patientId && priorOptions.length ? (
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium text-[hsl(var(--text-secondary))]">Follow-up of (optional)</p>
+            <Select
+              value={followUpOfId || FOLLOW_NONE}
+              onValueChange={(v) => setFollowUpOfId(v === FOLLOW_NONE ? "" : v)}
+              options={followUpSelectOptions}
+              placeholder="Link to prior visit"
+            />
+          </div>
+        ) : null}
         <Input
           label="Chief complaint"
           value={chiefComplaint}

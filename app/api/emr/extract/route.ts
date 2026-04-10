@@ -1,7 +1,13 @@
 import Groq from "groq-sdk";
 import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
+
 import { getServerSession } from "@/src/lib/auth/session";
+import { EXTRACT_FULL_SYSTEM_PROMPT } from "@/src/lib/emr/extractDeltaPrompt";
+import { normalizeMedicationsArray } from "@/src/lib/emr/normalizeMedications";
+import { buildClinicalSummary, buildPatientSummary } from "@/src/lib/emr/summaries";
+import { enrichMedicationsWithIcd } from "@/src/lib/icd/enrichMedications";
+import type { EMRSnapshot } from "@/src/lib/emr/types";
 import { getDb } from "@/src/lib/mongodb/client";
 
 export async function POST(request: Request) {
@@ -24,8 +30,7 @@ export async function POST(request: Request) {
       messages: [
         {
           role: "system",
-          content:
-            "You are a medical transcription AI. Output ALL string fields in English only, even if the transcript is in Hindi or another language (translate faithfully). Extract structured EMR JSON with fields: chief_complaint, history_of_present_illness, symptoms, physical_examination, assessment, plan, vitals, medications, lab_tests_ordered, diagnosis (array of strings, optional), icd_suggestions, clinical_summary, patient_summary.",
+          content: EXTRACT_FULL_SYSTEM_PROMPT,
         },
         {
           role: "user",
@@ -41,6 +46,26 @@ export async function POST(request: Request) {
     const parsed = JSON.parse(completion.choices[0]?.message?.content ?? "{}");
     const db = await getDb();
     const consultationId = new ObjectId(body.consultation_id);
+
+    const diagnosisRaw = Array.isArray(parsed.diagnosis) ? parsed.diagnosis : [];
+    const diagnosis_text = diagnosisRaw.map((x: unknown) => String(x ?? "").trim()).filter(Boolean);
+
+    let snapshotForStore: EMRSnapshot = {
+      vitals: parsed.vitals ?? undefined,
+      chief_complaint: parsed.chief_complaint ?? null,
+      symptoms: Array.isArray(parsed.symptoms) ? parsed.symptoms.map((x: unknown) => String(x).trim()).filter(Boolean) : [],
+      diagnosis_text,
+      medications: normalizeMedicationsArray(parsed.medications),
+      lab_tests_ordered: Array.isArray(parsed.lab_tests_ordered)
+        ? parsed.lab_tests_ordered.map((x: unknown) => String(x).trim()).filter(Boolean)
+        : [],
+      clinical_summary: parsed.clinical_summary ?? null,
+      patient_summary: parsed.patient_summary ?? null,
+    };
+    snapshotForStore = await enrichMedicationsWithIcd(db, snapshotForStore);
+    snapshotForStore.clinical_summary = snapshotForStore.clinical_summary ?? buildClinicalSummary(snapshotForStore);
+    snapshotForStore.patient_summary = snapshotForStore.patient_summary ?? buildPatientSummary(snapshotForStore);
+
     const emrResult = await db.collection("emr_entries").findOneAndUpdate(
       { consultation_id: consultationId },
       {
@@ -48,18 +73,10 @@ export async function POST(request: Request) {
           chief_complaint: parsed.chief_complaint ?? null,
           symptoms: parsed.symptoms ?? [],
           assessment: parsed.assessment ?? null,
-          clinical_summary: parsed.clinical_summary ?? null,
+          clinical_summary: snapshotForStore.clinical_summary ?? null,
+          patient_summary: snapshotForStore.patient_summary ?? null,
           // Best-effort: also store into snapshot for the live panel
-          snapshot: {
-            vitals: parsed.vitals ?? undefined,
-            chief_complaint: parsed.chief_complaint ?? null,
-            symptoms: parsed.symptoms ?? [],
-            diagnosis_text: Array.isArray(parsed.diagnosis) ? parsed.diagnosis : [],
-            medications: Array.isArray(parsed.medications) ? parsed.medications : [],
-            lab_tests_ordered: Array.isArray(parsed.lab_tests_ordered) ? parsed.lab_tests_ordered : [],
-            clinical_summary: parsed.clinical_summary ?? null,
-            patient_summary: parsed.patient_summary ?? null,
-          },
+          snapshot: snapshotForStore,
           requires_review: true,
           updated_at: new Date().toISOString(),
         },
@@ -92,7 +109,7 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json(parsed);
+    return NextResponse.json({ ...parsed, snapshot: snapshotForStore });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Extraction failed" }, { status: 500 });
   }

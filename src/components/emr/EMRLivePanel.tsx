@@ -7,7 +7,7 @@ import { Button } from "@/src/components/ui/Button";
 import { Input } from "@/src/components/ui/Input";
 import { cn } from "@/src/lib/utils";
 import { findAllergyMedicationWarnings } from "@/src/lib/clinical/allergyMedicationCheck";
-import type { EMRMedication, EMRSnapshot } from "@/src/lib/emr/types";
+import type { EMRDiagnosisIcd, EMRMedication, EMRSnapshot } from "@/src/lib/emr/types";
 
 function normalizeArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -40,11 +40,13 @@ function MedicationIcdLookup({
   description,
   onPick,
   onClear,
+  compact = false,
 }: {
   code: string;
   description: string;
   onPick: (hit: IcdHit) => void;
   onClear: () => void;
+  compact?: boolean;
 }) {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<IcdHit[]>([]);
@@ -63,11 +65,11 @@ function MedicationIcdLookup({
   }, [q]);
 
   return (
-    <div className="space-y-1.5 rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-primary))] p-2">
-      <p className="text-[11px] font-medium text-[hsl(var(--text-muted))]">ICD-10 mapping (from database / search)</p>
+    <div className={cn("space-y-1.5 rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-primary))] p-2", compact && "space-y-1 p-1.5")}>
+      {!compact ? <p className="text-[11px] font-medium text-[hsl(var(--text-muted))]">ICD-10 mapping (from database / search)</p> : null}
       <div className="flex flex-wrap items-center gap-2">
         <input
-          className={cn(inputCls, "max-w-xs flex-1 text-xs")}
+          className={cn(inputCls, "max-w-xs flex-1 text-xs", compact && "h-8 px-2")}
           placeholder="Search code or diagnosis…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -85,7 +87,7 @@ function MedicationIcdLookup({
         ) : null}
       </div>
       {hits.length > 0 ? (
-        <ul className="max-h-28 overflow-auto rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] text-xs">
+        <ul className={cn("max-h-28 overflow-auto rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] text-xs", compact && "max-h-24")}>
           {hits.map((h) => (
             <li key={h.id}>
               <button
@@ -113,18 +115,23 @@ export function EMRLivePanel({
   snapshot,
   onChangeSnapshot,
   patientAllergies = [],
+  liveAllergyAlert,
 }: {
   consultationId: string;
   snapshot: EMRSnapshot;
   onChangeSnapshot: (next: EMRSnapshot) => void;
   /** Core allergies from patient history (for interaction warnings). */
   patientAllergies?: string[];
+  /** Real-time alert generated from live transcript mentions. */
+  liveAllergyAlert?: string | null;
 }) {
   const [saveText, setSaveText] = useState("Not saved yet");
   const [allergyBanner, setAllergyBanner] = useState<string | null>(null);
   const debounceRef = useRef<number | null>(null);
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+  const onChangeRef = useRef(onChangeSnapshot);
+  onChangeRef.current = onChangeSnapshot;
 
   const medications = snapshot.medications?.length ? snapshot.medications : [emptyMedication()];
 
@@ -157,22 +164,76 @@ export function EMRLivePanel({
   const allergyKey = patientAllergies.map((a) => String(a).trim().toLowerCase()).join("|");
 
   useEffect(() => {
-    let hideTimer: number | null = null;
     const debounce = window.setTimeout(() => {
       const named = (snapshotRef.current.medications ?? []).filter((m) => (m.name ?? "").trim());
       const warnings = findAllergyMedicationWarnings(patientAllergies, named);
-      if (!warnings.length) {
-        setAllergyBanner(null);
-        return;
-      }
-      setAllergyBanner(warnings.join(" · "));
-      hideTimer = window.setTimeout(() => setAllergyBanner(null), 2000);
+      setAllergyBanner(warnings.length ? warnings.join(" · ") : null);
     }, 350);
-    return () => {
-      window.clearTimeout(debounce);
-      if (hideTimer) window.clearTimeout(hideTimer);
-    };
+    return () => window.clearTimeout(debounce);
   }, [medSignature, allergyKey, patientAllergies]);
+
+  const diagnosisItems = useMemo(
+    () => normalizeArray(snapshot.diagnosis_text),
+    [snapshot.diagnosis_text]
+  );
+
+  const diagnosisIcdSig = useMemo(() => {
+    const rows = (snapshot.diagnosis_icd ?? []).map(
+      (row) => `${(row.diagnosis ?? "").trim().toLowerCase()}|${(row.icd10_code ?? "").trim()}`
+    );
+    return `${diagnosisItems.join("|")}::${rows.join(";;")}`;
+  }, [diagnosisItems, snapshot.diagnosis_icd]);
+
+  useEffect(() => {
+    if (!diagnosisItems.length) {
+      if ((snapshotRef.current.diagnosis_icd ?? []).length) {
+        onChangeRef.current({ ...snapshotRef.current, diagnosis_icd: [] });
+      }
+      return;
+    }
+
+    let cancelled = false;
+    const t = window.setTimeout(async () => {
+      const s2 = snapshotRef.current;
+      const current = s2.diagnosis_icd ?? [];
+      const byDiagnosis = new Map(current.map((row) => [String(row.diagnosis ?? "").trim().toLowerCase(), row]));
+      const nextRows: EMRDiagnosisIcd[] = [];
+      let changed = false;
+
+      for (const diagnosis of diagnosisItems) {
+        const key = diagnosis.trim().toLowerCase();
+        const existing = byDiagnosis.get(key);
+        if (existing) {
+          nextRows.push({ ...existing, diagnosis });
+          continue;
+        }
+
+        if (cancelled) return;
+        let hit: IcdHit | undefined;
+        const res = await fetch(`/api/icd/search?q=${encodeURIComponent(diagnosis)}&limit=1`);
+        const data = (await res.json()) as { codes?: IcdHit[] };
+        if (data.codes?.[0]) hit = data.codes[0];
+
+        nextRows.push({
+          diagnosis,
+          icd10_code: hit?.code ?? "",
+          icd10_description: hit?.description ?? "",
+          confidence: hit ? "low" : undefined,
+        });
+        changed = true;
+      }
+
+      const removedStale = current.length !== nextRows.length;
+      if (changed || removedStale) {
+        onChangeRef.current({ ...s2, diagnosis_icd: nextRows });
+      }
+    }, 650);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [diagnosisIcdSig, diagnosisItems]);
 
   const setMeds = (next: EMRMedication[]) => {
     const cleaned = next.filter((m) => m.name?.trim());
@@ -182,14 +243,25 @@ export function EMRLivePanel({
     });
   };
 
+  const combinedAllergyBanner = [liveAllergyAlert, allergyBanner].filter(Boolean).join(" · ");
+
   return (
-    <div className="flex min-h-0 w-full min-w-0 flex-col gap-4 pb-1 text-[hsl(var(--text-secondary))]">
-      {allergyBanner ? (
+    <div className="flex min-h-0 w-full min-w-0 flex-col gap-3 pb-1 text-[hsl(var(--text-secondary))]">
+      {combinedAllergyBanner ? (
         <div
           className="shrink-0 rounded-[var(--radius)] border border-[hsl(var(--danger))] bg-[hsl(var(--danger)/0.12)] px-3 py-2 text-xs font-medium text-[hsl(var(--danger))]"
           role="alert"
         >
-          {allergyBanner}
+          {combinedAllergyBanner}
+        </div>
+      ) : null}
+      {patientAllergies.length ? (
+        <div
+          className="shrink-0 rounded-[var(--radius)] border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] px-3 py-2 text-xs text-[hsl(var(--text-secondary))]"
+          role="status"
+        >
+          <span className="font-semibold text-[hsl(var(--text-primary))]">Allergies on file: </span>
+          {patientAllergies.join(", ")}
         </div>
       ) : null}
 
@@ -317,7 +389,7 @@ export function EMRLivePanel({
             <textarea
               id="csum"
               className={textareaCls}
-              rows={3}
+              rows={2}
               value={snapshot.clinical_summary ?? ""}
               onChange={(e) => onChangeSnapshot({ ...snapshot, clinical_summary: e.target.value })}
             />
@@ -329,7 +401,7 @@ export function EMRLivePanel({
             <textarea
               id="psum"
               className={textareaCls}
-              rows={3}
+              rows={2}
               value={snapshot.patient_summary ?? ""}
               onChange={(e) => onChangeSnapshot({ ...snapshot, patient_summary: e.target.value })}
             />
@@ -352,94 +424,171 @@ export function EMRLivePanel({
             Add medication
           </Button>
         </div>
-        <div className="flex flex-col gap-4">
-          {medications.map((med, index) => (
-            <div
-              key={index}
-              className="space-y-3 rounded-[calc(var(--radius)-2px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-secondary)/0.4)] p-3"
-            >
-              <div className={fieldWrap}>
-                <label className={labelCls}>Drug name</label>
-                <input
-                  className={inputCls}
-                  value={med.name}
-                  onChange={(e) => {
-                    const next = [...medications];
-                    next[index] = { ...next[index], name: e.target.value };
-                    setMeds(next);
-                  }}
-                />
-              </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {(
-                  [
-                    ["dosage", "Dose"],
-                    ["frequency", "Frequency"],
-                    ["duration", "Duration"],
-                    ["route", "Route"],
-                  ] as const
-                ).map(([field, lbl]) => (
-                  <div key={field} className={fieldWrap}>
-                    <label className={labelCls}>{lbl}</label>
+        <div className="overflow-x-auto rounded-[calc(var(--radius)-2px)] border border-[hsl(var(--border))]">
+          <table className="min-w-[980px] w-full text-xs">
+            <thead className="bg-[hsl(var(--bg-secondary)/0.55)] text-[hsl(var(--text-muted))]">
+              <tr>
+                <th className="px-2 py-2 text-left font-semibold">Drug</th>
+                <th className="px-2 py-2 text-left font-semibold">Dose</th>
+                <th className="px-2 py-2 text-left font-semibold">Frequency</th>
+                <th className="px-2 py-2 text-left font-semibold">Duration</th>
+                <th className="px-2 py-2 text-left font-semibold">Route</th>
+                <th className="px-2 py-2 text-left font-semibold">Instructions</th>
+                <th className="w-12 px-2 py-2 text-right font-semibold">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {medications.map((med, index) => (
+                <tr key={index} className="border-t border-[hsl(var(--border))] bg-[hsl(var(--bg-card))]">
+                  <td className="p-2 align-top">
                     <input
-                      className={inputCls}
-                      value={(med[field] as string) ?? ""}
+                      className={cn(inputCls, "h-8 min-w-[150px] px-2 text-xs")}
+                      value={med.name}
                       onChange={(e) => {
                         const next = [...medications];
-                        next[index] = { ...next[index], [field]: e.target.value };
+                        next[index] = { ...next[index], name: e.target.value };
                         setMeds(next);
                       }}
                     />
+                  </td>
+                  <td className="p-2 align-top">
+                    <input
+                      className={cn(inputCls, "h-8 min-w-[92px] px-2 text-xs")}
+                      value={med.dosage ?? ""}
+                      onChange={(e) => {
+                        const next = [...medications];
+                        next[index] = { ...next[index], dosage: e.target.value };
+                        setMeds(next);
+                      }}
+                    />
+                  </td>
+                  <td className="p-2 align-top">
+                    <input
+                      className={cn(inputCls, "h-8 min-w-[130px] px-2 text-xs")}
+                      value={med.frequency ?? ""}
+                      onChange={(e) => {
+                        const next = [...medications];
+                        next[index] = { ...next[index], frequency: e.target.value };
+                        setMeds(next);
+                      }}
+                    />
+                  </td>
+                  <td className="p-2 align-top">
+                    <input
+                      className={cn(inputCls, "h-8 min-w-[92px] px-2 text-xs")}
+                      value={med.duration ?? ""}
+                      onChange={(e) => {
+                        const next = [...medications];
+                        next[index] = { ...next[index], duration: e.target.value };
+                        setMeds(next);
+                      }}
+                    />
+                  </td>
+                  <td className="p-2 align-top">
+                    <input
+                      className={cn(inputCls, "h-8 min-w-[82px] px-2 text-xs")}
+                      value={med.route ?? ""}
+                      onChange={(e) => {
+                        const next = [...medications];
+                        next[index] = { ...next[index], route: e.target.value };
+                        setMeds(next);
+                      }}
+                    />
+                  </td>
+                  <td className="p-2 align-top">
+                    <input
+                      className={cn(inputCls, "h-8 min-w-[220px] px-2 text-xs")}
+                      value={med.instructions ?? ""}
+                      onChange={(e) => {
+                        const next = [...medications];
+                        next[index] = { ...next[index], instructions: e.target.value };
+                        setMeds(next);
+                      }}
+                    />
+                  </td>
+                  <td className="p-2 text-right align-top">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-[hsl(var(--danger))]"
+                      iconLeft={<Trash2 className="h-3.5 w-3.5" />}
+                      onClick={() => {
+                        const next = medications.filter((_, i) => i !== index);
+                        setMeds(next.length ? next : [emptyMedication()]);
+                      }}
+                      aria-label="Remove medication"
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* ICD-10 mapping */}
+      <section className="rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-3 shadow-[var(--shadow-sm)]">
+        <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-muted))]">ICD-10 mapping</h4>
+        <div className="flex flex-col gap-2">
+          {diagnosisItems.length > 0 ? (
+            diagnosisItems
+              .map((diagnosis, index) => {
+                const row = (snapshot.diagnosis_icd ?? []).find(
+                  (item) => String(item.diagnosis ?? "").trim().toLowerCase() === diagnosis.trim().toLowerCase()
+                );
+                return { diagnosis, index, row };
+              })
+              .map(({ diagnosis, index, row }) => (
+                <div key={`icd-${index}`} className="rounded-[calc(var(--radius)-2px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-secondary)/0.35)] p-2">
+                  <div className="mb-1.5 flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold text-[hsl(var(--text-primary))]">{diagnosis}</p>
+                    {row?.confidence === "low" && row?.icd10_code ? (
+                      <p className="text-[10px] text-[hsl(var(--text-muted))]">Auto-mapped, verify</p>
+                    ) : null}
                   </div>
-                ))}
-              </div>
-              <div className={fieldWrap}>
-                <label className={labelCls}>Instructions</label>
-                <input
-                  className={inputCls}
-                  value={med.instructions ?? ""}
-                  onChange={(e) => {
-                    const next = [...medications];
-                    next[index] = { ...next[index], instructions: e.target.value };
-                    setMeds(next);
-                  }}
-                />
-              </div>
-              <MedicationIcdLookup
-                code={med.icd10_code ?? ""}
-                description={med.icd10_description ?? ""}
-                onPick={(hit) => {
-                  const next = [...medications];
-                  next[index] = {
-                    ...next[index],
-                    icd10_code: hit.code,
-                    icd10_description: hit.description,
-                  };
-                  setMeds(next);
-                }}
-                onClear={() => {
-                  const next = [...medications];
-                  next[index] = { ...next[index], icd10_code: "", icd10_description: "" };
-                  setMeds(next);
-                }}
-              />
-              <div className="flex justify-end">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 text-xs text-[hsl(var(--danger))]"
-                  iconLeft={<Trash2 className="h-3.5 w-3.5" />}
-                  onClick={() => {
-                    const next = medications.filter((_, i) => i !== index);
-                    setMeds(next.length ? next : [emptyMedication()]);
-                  }}
-                >
-                  Remove
-                </Button>
-              </div>
-            </div>
-          ))}
+                  <MedicationIcdLookup
+                    compact
+                    code={row?.icd10_code ?? ""}
+                    description={row?.icd10_description ?? ""}
+                    onPick={(hit) => {
+                      const s2 = snapshotRef.current;
+                      const existing = [...(s2.diagnosis_icd ?? [])];
+                      const idx = existing.findIndex(
+                        (item) => String(item.diagnosis ?? "").trim().toLowerCase() === diagnosis.trim().toLowerCase()
+                      );
+                      const nextRow: EMRDiagnosisIcd = {
+                        diagnosis,
+                        icd10_code: hit.code,
+                        icd10_description: hit.description,
+                        confidence: undefined,
+                      };
+                      if (idx >= 0) existing[idx] = nextRow;
+                      else existing.push(nextRow);
+                      onChangeSnapshot({ ...s2, diagnosis_icd: existing });
+                    }}
+                    onClear={() => {
+                      const s2 = snapshotRef.current;
+                      const existing = [...(s2.diagnosis_icd ?? [])];
+                      const idx = existing.findIndex(
+                        (item) => String(item.diagnosis ?? "").trim().toLowerCase() === diagnosis.trim().toLowerCase()
+                      );
+                      const nextRow: EMRDiagnosisIcd = {
+                        diagnosis,
+                        icd10_code: "",
+                        icd10_description: "",
+                        confidence: undefined,
+                      };
+                      if (idx >= 0) existing[idx] = nextRow;
+                      else existing.push(nextRow);
+                      onChangeSnapshot({ ...s2, diagnosis_icd: existing });
+                    }}
+                  />
+                </div>
+              ))
+          ) : (
+            <p className="text-xs text-[hsl(var(--text-muted))]">Add diagnosis text to manage ICD-10 mapping.</p>
+          )}
         </div>
       </section>
 
