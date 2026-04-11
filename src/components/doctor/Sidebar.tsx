@@ -32,7 +32,7 @@ function SidebarContent({ collapsed, doctorName, doctorSpecialization, onNavigat
     <div className="flex h-full flex-col">
       <div className={cn("px-4 py-4", collapsed ? "px-3" : "px-5")}>
         <p className={cn("font-semibold tracking-tight text-[hsl(var(--text-primary))]", collapsed ? "text-center text-sm" : "text-xl")}>
-          {collapsed ? "CQ" : "CliniQ"}
+          {collapsed ? "MF" : "MediFlow"}
         </p>
       </div>
 
