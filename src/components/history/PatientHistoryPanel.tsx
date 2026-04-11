@@ -22,7 +22,7 @@ type HistoryPayload = {
 
 type ContextResponse = {
   doctor?: { specialty_code?: string; specialization?: string | null; name?: string | null } | null;
-  patient?: { name?: string | null; phone?: string | null; dob?: string | null; gender?: string | null } | null;
+  patient?: { id?: string; name?: string | null; phone?: string | null; dob?: string | null; gender?: string | null } | null;
   history?: HistoryPayload;
   specialty_history?: { lmp?: string; g_p_a_l?: string; cycle_history?: string; [key: string]: unknown } | null;
   latest_consultation?: {
