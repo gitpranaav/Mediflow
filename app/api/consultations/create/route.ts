@@ -2,6 +2,7 @@ import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
 
 import { getServerSession } from "@/src/lib/auth/session";
+import { logConsultationAudit } from "@/src/lib/audit/consultationLedger";
 import { getDb } from "@/src/lib/mongodb/client";
 import { normalizeConsultationType } from "@/src/lib/consultations/visitTypes";
 
@@ -87,6 +88,24 @@ export async function POST(request: Request) {
       updated_at: now,
     });
   }
+
+  await logConsultationAudit(db, {
+    consultationId: inserted.insertedId,
+    patientId: patientObjectId,
+    actorId: session.uid,
+    actorRole: role,
+    source: role === "doctor" ? "doctor_manual" : "receptionist_manual",
+    eventType: "consultation_started",
+    before: null,
+    after: {
+      status: "active",
+      type: visitType,
+      started_at: now,
+      follow_up_of: followUpOfId?.toString() ?? null,
+    },
+    metadata: { route: "consultations.create.post" },
+    allowNoop: true,
+  });
 
   return NextResponse.json({ consultation_id: inserted.insertedId.toString() });
 }

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { ObjectId } from "mongodb";
 
 import { PatientDetailTabs } from "@/src/components/doctor/PatientDetailTabs";
+import { PatientHistoryPanel } from "@/src/components/history/PatientHistoryPanel";
 import { Avatar } from "@/src/components/ui/Avatar";
 import { Badge } from "@/src/components/ui/Badge";
 import { Card, CardContent } from "@/src/components/ui/Card";
@@ -228,6 +229,8 @@ export default async function PatientDetailPage({ params }: DetailPageProps) {
       </Card>
 
       <PatientDetailTabs patient={typedPatient} history={history} />
+
+      <PatientHistoryPanel patientId={typedPatient.id} />
     </div>
   );
 }

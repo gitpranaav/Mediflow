@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/Card";
 import { Badge } from "@/src/components/ui/Badge";
+import { Button } from "@/src/components/ui/Button";
 
 type HistoryPayload = {
   id?: string;
@@ -87,24 +88,175 @@ function normalizeMedicationLabel(value: unknown) {
   return parts.join(" · ");
 }
 
-export function PatientHistoryPanel({ consultationId }: { consultationId: string }) {
+const ARRAY_KEYS = new Set(["allergies", "problem_list", "past_surgeries", "immunizations", "active_meds", "diagnoses"]);
+
+function parseEditorValue(key: string, value: string, wasArray: boolean) {
+  if (wasArray || ARRAY_KEYS.has(key)) {
+    return value
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  return value.trim();
+}
+
+function valueToEditorText(value: unknown) {
+  if (Array.isArray(value)) return value.map((item) => String(item ?? "").trim()).filter(Boolean).join(", ");
+  return String(value ?? "");
+}
+
+export function PatientHistoryPanel({ consultationId, patientId }: { consultationId?: string; patientId?: string }) {
   const [data, setData] = useState<ContextResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [pendingCore, setPendingCore] = useState<Record<string, unknown>>({});
+  const [pendingSpecialty, setPendingSpecialty] = useState<Record<string, unknown>>({});
+  const [editing, setEditing] = useState<{ scope: "core" | "specialty"; key: string; asArray: boolean } | null>(null);
+  const [editorValue, setEditorValue] = useState("");
+
+  const endpoint = patientId ? `/api/patients/${patientId}/history` : consultationId ? `/api/consultations/context/${consultationId}` : null;
 
   useEffect(() => {
+    if (!endpoint) return;
     let cancelled = false;
     (async () => {
       setError(null);
-      const res = await fetch(`/api/consultations/context/${consultationId}`);
+      const res = await fetch(endpoint);
       const json = await res.json();
       if (cancelled) return;
       if (!res.ok) setError(json.error ?? "Failed to load history");
-      else setData(json);
+      else {
+        setData(json);
+        setPendingCore({});
+        setPendingSpecialty({});
+        setSaveMsg(null);
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [consultationId]);
+  }, [endpoint]);
+
+  const targetPatientId = patientId ?? data?.patient?.id ?? data?.history?.patient_id;
+  const hasPending = Object.keys(pendingCore).length > 0 || Object.keys(pendingSpecialty).length > 0;
+
+  const startEdit = (scope: "core" | "specialty", key: string, value: unknown) => {
+    setEditing({ scope, key, asArray: Array.isArray(value) });
+    setEditorValue(valueToEditorText(value));
+  };
+
+  const commitEdit = () => {
+    if (!editing) return;
+    const next = parseEditorValue(editing.key, editorValue, editing.asArray);
+    if (editing.scope === "core") {
+      setPendingCore((prev) => ({ ...prev, [editing.key]: next }));
+    } else {
+      setPendingSpecialty((prev) => ({ ...prev, [editing.key]: next }));
+    }
+    setEditing(null);
+    setEditorValue("");
+    setSaveMsg(null);
+  };
+
+  const cancelEdit = () => {
+    setEditing(null);
+    setEditorValue("");
+  };
+
+  const saveChanges = async () => {
+    if (!targetPatientId || !hasPending || saving) return;
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const res = await fetch(`/api/patients/${targetPatientId}/history`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          core: pendingCore,
+          specialty_history: pendingSpecialty,
+          consultation_id: consultationId,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setSaveMsg(json.error ?? "Save failed");
+        return;
+      }
+
+      setData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          history: {
+            ...(prev.history ?? {}),
+            ...pendingCore,
+            updated_at: new Date().toISOString(),
+          },
+          specialty_history: {
+            ...(prev.specialty_history ?? {}),
+            ...pendingSpecialty,
+          },
+        };
+      });
+      setPendingCore({});
+      setPendingSpecialty({});
+      setSaveMsg("Saved");
+    } catch {
+      setSaveMsg("Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const showValue = (scope: "core" | "specialty", key: string, fallback: unknown) => {
+    if (scope === "core" && key in pendingCore) return pendingCore[key];
+    if (scope === "specialty" && key in pendingSpecialty) return pendingSpecialty[key];
+    return fallback;
+  };
+
+  const renderEditable = (scope: "core" | "specialty", key: string, value: unknown, multiline = false) => {
+    const active = editing?.scope === scope && editing.key === key;
+    const resolved = showValue(scope, key, value);
+    if (active) {
+      return (
+        <div className="space-y-1">
+          {multiline ? (
+            <textarea
+              className="min-h-[3.5rem] w-full rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] px-2 py-1.5 text-sm text-[hsl(var(--text-primary))]"
+              value={editorValue}
+              onChange={(e) => setEditorValue(e.target.value)}
+            />
+          ) : (
+            <input
+              className="h-8 w-full rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] px-2 text-sm text-[hsl(var(--text-primary))]"
+              value={editorValue}
+              onChange={(e) => setEditorValue(e.target.value)}
+            />
+          )}
+          <div className="flex items-center gap-2">
+            <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-xs" onClick={commitEdit}>
+              Done
+            </Button>
+            <button type="button" className="text-xs text-[hsl(var(--text-muted))] underline" onClick={cancelEdit}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const text = Array.isArray(resolved) ? listOrDash(resolved) : multiline ? textOrDash(resolved) : textOrDash(resolved);
+    return (
+      <p
+        className="cursor-text whitespace-pre-wrap text-[hsl(var(--text-primary))]"
+        onDoubleClick={() => startEdit(scope, key, resolved)}
+        title="Double-click to edit"
+      >
+        {text}
+      </p>
+    );
+  };
 
   return (
     <div className="space-y-3">
@@ -112,11 +264,20 @@ export function PatientHistoryPanel({ consultationId }: { consultationId: string
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="text-base">Patient History</CardTitle>
-            {data?.doctor?.specialty_code ? <Badge variant="outline">{data.doctor.specialty_code}</Badge> : null}
+            <div className="flex items-center gap-2">
+              {saveMsg ? <span className="text-xs text-[hsl(var(--text-muted))]">{saveMsg}</span> : null}
+              {hasPending ? (
+                <Button type="button" size="sm" className="h-7 px-2 text-xs" onClick={saveChanges} loading={saving}>
+                  Save
+                </Button>
+              ) : null}
+              {data?.doctor?.specialty_code ? <Badge variant="outline">{data.doctor.specialty_code}</Badge> : null}
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
           {error ? <p className="text-xs text-[hsl(var(--danger))]">{error}</p> : null}
+          <p className="text-[10px] text-[hsl(var(--text-muted))]">Double-click any history field to edit, then click Save.</p>
 
           <div className="space-y-1 text-sm">
             <p className="text-xs font-medium text-[hsl(var(--text-primary))]">Core history</p>
@@ -124,37 +285,37 @@ export function PatientHistoryPanel({ consultationId }: { consultationId: string
 
           <div className="space-y-1 text-sm">
             <p className="text-xs text-[hsl(var(--text-muted))]">Allergies</p>
-            <p className="text-[hsl(var(--text-primary))]">{listOrDash(data?.history?.allergies)}</p>
+            {renderEditable("core", "allergies", data?.history?.allergies)}
           </div>
 
           <div className="space-y-1 text-sm">
             <p className="text-xs text-[hsl(var(--text-muted))]">Problem list</p>
-            <p className="text-[hsl(var(--text-primary))]">{listOrDash(data?.history?.problem_list)}</p>
+            {renderEditable("core", "problem_list", data?.history?.problem_list)}
           </div>
 
           <div className="space-y-1 text-sm">
             <p className="text-xs text-[hsl(var(--text-muted))]">Past surgeries</p>
-            <p className="text-[hsl(var(--text-primary))]">{listOrDash(data?.history?.past_surgeries)}</p>
+            {renderEditable("core", "past_surgeries", data?.history?.past_surgeries)}
           </div>
 
           <div className="space-y-1 text-sm">
             <p className="text-xs text-[hsl(var(--text-muted))]">Family history</p>
-            <p className="whitespace-pre-wrap text-[hsl(var(--text-primary))]">{textOrDash(data?.history?.family_history)}</p>
+            {renderEditable("core", "family_history", data?.history?.family_history, true)}
           </div>
 
           <div className="space-y-1 text-sm">
             <p className="text-xs text-[hsl(var(--text-muted))]">Social history</p>
-            <p className="whitespace-pre-wrap text-[hsl(var(--text-primary))]">{textOrDash(data?.history?.social_history)}</p>
+            {renderEditable("core", "social_history", data?.history?.social_history, true)}
           </div>
 
           <div className="space-y-1 text-sm">
             <p className="text-xs text-[hsl(var(--text-muted))]">Immunizations</p>
-            <p className="text-[hsl(var(--text-primary))]">{listOrDash(data?.history?.immunizations)}</p>
+            {renderEditable("core", "immunizations", data?.history?.immunizations)}
           </div>
 
           <div className="space-y-1 text-sm">
             <p className="text-xs text-[hsl(var(--text-muted))]">Active meds</p>
-            <p className="text-[hsl(var(--text-primary))]">{listOrDash(data?.history?.active_meds)}</p>
+            {renderEditable("core", "active_meds", data?.history?.active_meds)}
           </div>
 
           {data?.history?.id ? (
@@ -226,7 +387,7 @@ export function PatientHistoryPanel({ consultationId }: { consultationId: string
                 {omitSpecialtyKeys(data.specialty_history as Record<string, unknown>).map(([key, value]) => (
                   <div key={key} className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2">
                     <p className="text-[10px] text-[hsl(var(--text-muted))]">{fieldLabel(key)}</p>
-                    <p className="whitespace-pre-wrap text-[hsl(var(--text-primary))]">{Array.isArray(value) ? listOrDash(value) : textOrDash(value)}</p>
+                    {renderEditable("specialty", key, value, !Array.isArray(value))}
                   </div>
                 ))}
               </div>

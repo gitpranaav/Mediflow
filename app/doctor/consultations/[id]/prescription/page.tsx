@@ -16,6 +16,57 @@ function clean(value: unknown) {
   return String(value ?? "").trim();
 }
 
+function normalizeText(value: unknown) {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[,.;]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractCountNearPhrase(text: string, phrase: string): number {
+  const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const direct = text.match(new RegExp(`(?:^|\\s)(\\d+)\\s*(?:tab|tablet|cap|capsule|ml|drop|drops)?\\s*(?:-)?\\s*(?:before|after)?\\s*${escaped}(?:$|\\s)`));
+  if (direct?.[1]) return Number(direct[1]) || 1;
+
+  const reverse = text.match(new RegExp(`${escaped}\\s*(?:-)?\\s*(\\d+)\\b`));
+  if (reverse?.[1]) return Number(reverse[1]) || 1;
+
+  return 1;
+}
+
+function inferDoseNotation(med: any): string | null {
+  const combined = normalizeText(`${clean(med?.frequency)} ${clean(med?.instructions)}`);
+  if (!combined) return null;
+
+  const explicit = combined.match(/\b(\d+)\s*[-/]\s*(\d+)\s*[-/]\s*(\d+)\b/);
+  if (explicit) return `${explicit[1]}-${explicit[2]}-${explicit[3]}`;
+
+  let morning = 0;
+  let afternoon = 0;
+  let night = 0;
+
+  if (/breakfast|morning|after waking/.test(combined)) {
+    morning = extractCountNearPhrase(combined, "breakfast");
+  }
+  if (/lunch|afternoon|noon/.test(combined)) {
+    afternoon = extractCountNearPhrase(combined, "lunch");
+  }
+  if (/dinner|night|bedtime|evening/.test(combined)) {
+    night = extractCountNearPhrase(combined, "dinner");
+  }
+
+  if (morning || afternoon || night) {
+    return `${morning}-${afternoon}-${night}`;
+  }
+
+  if (/once (a )?day|once daily|daily once|od\b/.test(combined)) return "1-0-0";
+  if (/twice (a )?day|twice daily|bid\b/.test(combined)) return "1-0-1";
+  if (/thrice (a )?day|three times (a )?day|tid\b/.test(combined)) return "1-1-1";
+
+  return null;
+}
+
 async function fetchPrescriptionData(id: string) {
   const { db, session } = await getServerContext();
   const doctorObjectId = new ObjectId(session.uid);
@@ -121,14 +172,22 @@ export default async function PrescriptionPage({ params }: { params: Promise<{ i
               </thead>
               <tbody>
                 {medications.map((med: any, index: number) => (
-                  <tr key={`${clean(med.name)}-${index}`} className="border-b border-black/10 align-top">
-                    <td className="py-2 pr-2">{index + 1}</td>
-                    <td className="py-2 pr-2 font-semibold uppercase">{clean(med.name)}</td>
-                    <td className="py-2 pr-2">{clean(med.dosage) || "-"}</td>
-                    <td className="py-2 pr-2">{clean(med.frequency) || "-"}</td>
-                    <td className="py-2 pr-2">{clean(med.duration) || "-"}</td>
-                    <td className="py-2 pr-2">{[clean(med.route), clean(med.instructions)].filter(Boolean).join(" - ") || "-"}</td>
-                  </tr>
+                  (() => {
+                    const notation = inferDoseNotation(med);
+                    return (
+                      <tr key={`${clean(med.name)}-${index}`} className="border-b border-black/10 align-top">
+                        <td className="py-2 pr-2">{index + 1}</td>
+                        <td className="py-2 pr-2 font-semibold uppercase">{clean(med.name)}</td>
+                        <td className="py-2 pr-2">
+                          {notation ? <div className="font-semibold tracking-wide">{notation}</div> : null}
+                          <div>{clean(med.dosage) || "-"}</div>
+                        </td>
+                        <td className="py-2 pr-2">{clean(med.frequency) || "-"}</td>
+                        <td className="py-2 pr-2">{clean(med.duration) || "-"}</td>
+                        <td className="py-2 pr-2">{[clean(med.route), clean(med.instructions)].filter(Boolean).join(" - ") || "-"}</td>
+                      </tr>
+                    );
+                  })()
                 ))}
               </tbody>
             </table>

@@ -19,8 +19,19 @@ interface WorkspaceProps {
   patientId: string | null;
   patientName: string;
   consultationType: string;
+  initialStatus?: string | null;
   initialStartedAt: string | null;
 }
+
+type AuditEvent = {
+  id: string;
+  actor_role: string | null;
+  source: string | null;
+  event_type: string | null;
+  sequence_no: number | null;
+  created_at: string | null;
+  changed_paths: string[];
+};
 
 function normalize(value: string) {
   return value.toLowerCase().trim();
@@ -85,14 +96,17 @@ export function ConsultationWorkspace({
   patientId,
   patientName,
   consultationType,
+  initialStatus,
   initialStartedAt,
 }: WorkspaceProps) {
   const [syncText, setSyncText] = useState("Sync pending");
-  const [isEnded, setIsEnded] = useState(false);
+  const [isEnded, setIsEnded] = useState(String(initialStatus ?? "").toLowerCase() === "completed");
   const [patientAllergies, setPatientAllergies] = useState<string[]>([]);
   const [emrSnapshot, setEmrSnapshot] = useState<EMRSnapshot>({});
   const [historyOpen, setHistoryOpen] = useState(true);
   const [cursor, setCursor] = useState<{ last_final_segment_id?: string | null; last_final_index?: number | null } | null>(null);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [auditError, setAuditError] = useState<string | null>(null);
   const extractingRef = useRef(false);
   const emrSnapshotRef = useRef<EMRSnapshot>({});
   const cursorRef = useRef<typeof cursor>(null);
@@ -130,6 +144,31 @@ export function ConsultationWorkspace({
       setSyncText(response.ok ? `Synced ${new Date().toLocaleTimeString("en-IN")}` : "Status sync failed");
     }, 30000);
     return () => clearInterval(interval);
+  }, [consultationId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const res = await fetch(`/api/consultations/${consultationId}/audit`);
+      const data = await res.json();
+      if (cancelled) return;
+      if (!res.ok) {
+        setAuditError(data.error ?? "Failed to load audit trail");
+        return;
+      }
+      setAuditEvents(Array.isArray(data.events) ? data.events : []);
+      setAuditError(null);
+    };
+
+    void load();
+    const timer = window.setInterval(() => {
+      void load();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [consultationId]);
 
   useEffect(() => {
@@ -222,6 +261,10 @@ export function ConsultationWorkspace({
   );
 
   const endConsultation = async () => {
+    if (stt.status !== "idle") {
+      await stt.stop();
+    }
+
     // Persist latest transcript before finalize
     if (stt.fullText?.trim()) {
       await fetch("/api/transcripts/upsert", {
@@ -304,7 +347,16 @@ export function ConsultationWorkspace({
           </CardHeader>
           <CardContent className="min-h-0 flex-1 overflow-auto px-3 pb-3 pt-0 text-sm text-[hsl(var(--text-secondary))]">
             <div className="space-y-3">
-              <STTRecorder status={stt.status} error={stt.error} onStart={stt.start} onStop={stt.stop} onPause={stt.pause} onResume={stt.resume} />
+              <STTRecorder
+                status={stt.status}
+                error={stt.error}
+                onStart={stt.start}
+                onStop={stt.stop}
+                onPause={stt.pause}
+                onResume={stt.resume}
+                disabled={isEnded}
+              />
+
               <TranscriptViewer segments={stt.segments as any} interimText={stt.interimText} />
             </div>
           </CardContent>
@@ -347,7 +399,33 @@ export function ConsultationWorkspace({
         </div>
       </div>
 
-      <p className="text-xs text-[hsl(var(--text-muted))]">{syncText}</p>
+      <Card>
+        <CardHeader className="py-2 pb-1">
+          <CardTitle className="text-sm">Audit Trail</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 px-3 pb-3 pt-0">
+          {auditError ? <p className="text-xs text-[hsl(var(--danger))]">{auditError}</p> : null}
+          {(auditEvents ?? []).length ? (
+            <div className="max-h-36 space-y-1 overflow-y-auto pr-1">
+              {auditEvents.slice(0, 12).map((event) => (
+                <div key={event.id} className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] px-2 py-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-[hsl(var(--text-primary))]">#{event.sequence_no ?? "-"} {event.event_type ?? "event"}</p>
+                    <p className="text-[10px] text-[hsl(var(--text-muted))]">{event.created_at ? new Date(event.created_at).toLocaleTimeString("en-IN") : ""}</p>
+                  </div>
+                  <p className="text-[10px] text-[hsl(var(--text-secondary))]">{event.source ?? "-"} · {event.actor_role ?? "-"}</p>
+                  {event.changed_paths.length ? (
+                    <p className="truncate text-[10px] text-[hsl(var(--text-muted))]" title={event.changed_paths.join(", ")}>changed: {event.changed_paths.slice(0, 4).join(", ")}</p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-[hsl(var(--text-muted))]">No audit events yet.</p>
+          )}
+          <p className="text-xs text-[hsl(var(--text-muted))]">{syncText}</p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
 
 import { getServerSession } from "@/src/lib/auth/session";
+import { logConsultationAudit } from "@/src/lib/audit/consultationLedger";
 import { EXTRACT_DELTA_SYSTEM_PROMPT } from "@/src/lib/emr/extractDeltaPrompt";
 import { enrichMedicationsWithIcd } from "@/src/lib/icd/enrichMedications";
 import { applyEMROps } from "@/src/lib/emr/merge";
@@ -99,6 +100,24 @@ export async function POST(request: Request) {
       },
       { upsert: true }
     );
+
+    const consultation = await db.collection("consultations").findOne({ _id: consultationId }, { projection: { patient_id: 1 } });
+    await logConsultationAudit(db, {
+      consultationId,
+      patientId: consultation?.patient_id ?? null,
+      actorId: session.uid,
+      actorRole: String(session.role),
+      source: "ai_delta",
+      eventType: "ai_delta_edit",
+      before: body.emr_snapshot ?? null,
+      after: merged,
+      metadata: {
+        route: "emr.extract-delta.post",
+        operation_count: operations.length,
+        segment_count: segmentsDelta.length,
+        segment_ids: segmentsDelta.map((s) => s.id),
+      },
+    });
 
     return NextResponse.json({ operations, snapshot: merged, new_cursor: newCursor });
   } catch (error) {

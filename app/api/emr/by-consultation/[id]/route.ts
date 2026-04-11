@@ -2,6 +2,7 @@ import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
 
 import { getServerSession } from "@/src/lib/auth/session";
+import { logConsultationAudit } from "@/src/lib/audit/consultationLedger";
 import { getDb } from "@/src/lib/mongodb/client";
 
 type Params = { params: Promise<{ id: string }> };
@@ -43,6 +44,7 @@ export async function PUT(request: Request, { params }: Params) {
   const db = await getDb();
   const consultationObjectId = new ObjectId(id);
   const existing = await db.collection("emr_entries").findOne({ consultation_id: consultationObjectId });
+  const consultation = await db.collection("consultations").findOne({ _id: consultationObjectId }, { projection: { patient_id: 1 } });
   const mergedSnapshot =
     role === "receptionist"
       ? { ...(existing?.snapshot ?? {}), ...filteredSnapshot }
@@ -64,6 +66,19 @@ export async function PUT(request: Request, { params }: Params) {
     },
     { upsert: true }
   );
+
+  await logConsultationAudit(db, {
+    consultationId: consultationObjectId,
+    patientId: consultation?.patient_id ?? null,
+    actorId: session.uid,
+    actorRole: role,
+    source: role === "doctor" ? "doctor_manual" : "receptionist_manual",
+    eventType: role === "doctor" ? "doctor_field_edit" : "receptionist_field_edit",
+    before: existing?.snapshot ?? null,
+    after: mergedSnapshot,
+    metadata: { route: "emr.by-consultation.put" },
+  });
+
   return NextResponse.json({ ok: true });
 }
 

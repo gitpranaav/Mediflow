@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
 
 import { getServerSession } from "@/src/lib/auth/session";
+import { logConsultationAudit } from "@/src/lib/audit/consultationLedger";
 import { EXTRACT_FULL_SYSTEM_PROMPT } from "@/src/lib/emr/extractDeltaPrompt";
 import { normalizeMedicationsArray } from "@/src/lib/emr/normalizeMedications";
 import { buildClinicalSummary, buildPatientSummary } from "@/src/lib/emr/summaries";
@@ -46,6 +47,10 @@ export async function POST(request: Request) {
     const parsed = JSON.parse(completion.choices[0]?.message?.content ?? "{}");
     const db = await getDb();
     const consultationId = new ObjectId(body.consultation_id);
+    const [existingEmr, consultation] = await Promise.all([
+      db.collection("emr_entries").findOne({ consultation_id: consultationId }),
+      db.collection("consultations").findOne({ _id: consultationId }, { projection: { patient_id: 1 } }),
+    ]);
 
     const diagnosisRaw = Array.isArray(parsed.diagnosis) ? parsed.diagnosis : [];
     const diagnosis_text = diagnosisRaw.map((x: unknown) => String(x ?? "").trim()).filter(Boolean);
@@ -108,6 +113,22 @@ export async function POST(request: Request) {
         });
       }
     }
+
+    await logConsultationAudit(db, {
+      consultationId,
+      patientId: consultation?.patient_id ?? null,
+      actorId: session.uid,
+      actorRole: String(session.role),
+      source: "ai_final",
+      eventType: "ai_final_edit",
+      before: existingEmr?.snapshot ?? null,
+      after: snapshotForStore,
+      metadata: {
+        route: "emr.extract.post",
+        trigger: "transcription_stopped",
+        model: "llama-3.3-70b-versatile",
+      },
+    });
 
     return NextResponse.json({ ...parsed, snapshot: snapshotForStore });
   } catch (error) {

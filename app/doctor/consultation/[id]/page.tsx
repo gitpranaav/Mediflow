@@ -11,6 +11,7 @@ type ConsultationPageProps = {
 interface ConsultationRecord {
   id: string;
   type: string | null;
+  status: string | null;
   started_at: string | null;
   patients?: { name: string } | null;
 }
@@ -30,6 +31,7 @@ export default async function ConsultationPage({ params }: ConsultationPageProps
   const consultation = {
     id: consultationDoc._id.toString(),
     type: consultationDoc.type ?? null,
+    status: consultationDoc.status ?? null,
     started_at: consultationDoc.started_at ?? null,
     patients: patient ? { name: patient.name } : null,
   } as ConsultationRecord;
@@ -43,6 +45,7 @@ export default async function ConsultationPage({ params }: ConsultationPageProps
       patientId={patientId}
       patientName={consultation.patients?.name ?? "Unknown Patient"}
       consultationType={consultation.type ?? "General"}
+      initialStatus={consultation.status}
       initialStartedAt={consultation.started_at}
     />
   );

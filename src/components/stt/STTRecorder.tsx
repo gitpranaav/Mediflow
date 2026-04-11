@@ -14,9 +14,10 @@ interface Props {
   onStop: () => void;
   onPause: () => void;
   onResume: () => void;
+  disabled?: boolean;
 }
 
-export function STTRecorder({ status, error, onStart, onStop, onPause, onResume }: Props) {
+export function STTRecorder({ status, error, onStart, onStop, onPause, onResume, disabled = false }: Props) {
   const [seconds, setSeconds] = useState(0);
   const timerRef = useRef<number | null>(null);
 
@@ -45,15 +46,15 @@ export function STTRecorder({ status, error, onStart, onStop, onPause, onResume 
 
       <div className="flex items-center gap-2">
         {status === "idle" ? (
-          <Button onClick={onStart} iconLeft={<Mic className="h-4 w-4" />}>Start</Button>
+          <Button onClick={onStart} iconLeft={<Mic className="h-4 w-4" />} disabled={disabled}>Start</Button>
         ) : (
           <>
             {status === "recording" ? (
-              <Button variant="secondary" onClick={onPause} iconLeft={<Pause className="h-4 w-4" />}>Pause</Button>
+              <Button variant="secondary" onClick={onPause} iconLeft={<Pause className="h-4 w-4" />} disabled={disabled}>Pause</Button>
             ) : (
-              <Button variant="secondary" onClick={onResume} iconLeft={<Play className="h-4 w-4" />}>Resume</Button>
+              <Button variant="secondary" onClick={onResume} iconLeft={<Play className="h-4 w-4" />} disabled={disabled}>Resume</Button>
             )}
-            <Button variant="danger" onClick={onStop} iconLeft={<Square className="h-4 w-4" />}>Stop</Button>
+            <Button variant="danger" onClick={onStop} iconLeft={<Square className="h-4 w-4" />} disabled={disabled}>Stop</Button>
           </>
         )}
       </div>

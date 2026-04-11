@@ -2,6 +2,7 @@ import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
 
 import { getServerSession } from "@/src/lib/auth/session";
+import { logConsultationAudit } from "@/src/lib/audit/consultationLedger";
 import { getDb } from "@/src/lib/mongodb/client";
 
 type Params = { params: Promise<{ id: string }> };
@@ -66,6 +67,10 @@ export async function PATCH(request: Request, { params }: Params) {
   const consultationObjectId = new ObjectId(id);
   const doctorObjectId = new ObjectId(session.uid);
   const nowIso = new Date().toISOString();
+  const consultationBefore = await db.collection("consultations").findOne({ _id: consultationObjectId, doctor_id: doctorObjectId });
+  if (!consultationBefore) {
+    return NextResponse.json({ error: "Consultation not found" }, { status: 404 });
+  }
 
   const consultation = await db.collection("consultations").findOneAndUpdate(
     { _id: consultationObjectId, doctor_id: doctorObjectId },
@@ -77,10 +82,7 @@ export async function PATCH(request: Request, { params }: Params) {
     },
     { returnDocument: "after" }
   );
-
-  if (!consultation) {
-    return NextResponse.json({ error: "Consultation not found" }, { status: 404 });
-  }
+  const consultationAfter = consultation ?? consultationBefore;
 
   const shouldFinalize = String(payload.status ?? "") === "completed";
   if (shouldFinalize && consultation.patient_id) {
@@ -166,6 +168,32 @@ export async function PATCH(request: Request, { params }: Params) {
       },
       { upsert: true }
     );
+  }
+
+  const meaningfulPayloadKeys = Object.keys(payload).filter((key) => key !== "updated_at");
+  if (meaningfulPayloadKeys.length) {
+    await logConsultationAudit(db, {
+      consultationId: consultationObjectId,
+      patientId: consultationAfter.patient_id ?? null,
+      actorId: doctorObjectId,
+      actorRole: role,
+      source: role === "doctor" ? "doctor_manual" : "receptionist_manual",
+      eventType: shouldFinalize ? "consultation_finalized" : "consultation_updated",
+      before: {
+        status: consultationBefore.status ?? null,
+        ended_at: consultationBefore.ended_at ?? null,
+        type: consultationBefore.type ?? null,
+      },
+      after: {
+        status: consultationAfter.status ?? null,
+        ended_at: consultationAfter.ended_at ?? null,
+        type: consultationAfter.type ?? null,
+      },
+      metadata: {
+        route: "consultations.id.patch",
+        payload_keys: meaningfulPayloadKeys,
+      },
+    });
   }
 
   return NextResponse.json({ ok: true, finalized_sync: shouldFinalize });
