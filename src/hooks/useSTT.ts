@@ -50,8 +50,27 @@ export function useSTT({ consultationId, transcriptId, chunkMs = 250 }: UseSTTAr
   const [interimText, setInterimText] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [detectedLanguage, setDetectedLanguage] = useState<string | null>(null);
+  const hydratedRef = useRef(false);
 
   const fullText = useMemo(() => segments.filter((s) => s.is_final).map((s) => s.text).join(" ").trim(), [segments]);
+
+  const persistTranscript = useCallback(
+    async (processingStatus: "in_progress" | "paused" | "completed") => {
+      if (!consultationId) return;
+      await fetch("/api/transcripts/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: transcriptId ?? crypto.randomUUID(),
+          consultation_id: consultationId,
+          raw_text: fullText,
+          segments,
+          processing_status: processingStatus,
+        }),
+      });
+    },
+    [consultationId, fullText, segments, transcriptId]
+  );
 
   const cleanup = useCallback(() => {
     try {
@@ -192,10 +211,11 @@ export function useSTT({ consultationId, transcriptId, chunkMs = 250 }: UseSTTAr
     }
   }, [chunkMs, cleanup, consultationId, detectedLanguage, getDeepgramToken, status]);
 
-  const pause = useCallback(() => {
+  const pause = useCallback(async () => {
     mediaRecorderRef.current?.pause();
     setStatus("paused");
-  }, []);
+    await persistTranscript("paused");
+  }, [persistTranscript]);
 
   const resume = useCallback(() => {
     mediaRecorderRef.current?.resume();
@@ -205,39 +225,54 @@ export function useSTT({ consultationId, transcriptId, chunkMs = 250 }: UseSTTAr
   const stop = useCallback(async () => {
     cleanup();
     setStatus("idle");
-    if (consultationId) {
-      await fetch("/api/transcripts/upsert", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: transcriptId ?? crypto.randomUUID(),
-          consultation_id: consultationId,
-          raw_text: fullText,
-          segments,
-          processing_status: "completed",
-        }),
-      });
-    }
-  }, [cleanup, consultationId, fullText, segments, transcriptId]);
+    await persistTranscript("completed");
+  }, [cleanup, persistTranscript]);
 
   useEffect(() => {
-    if (!consultationId) return;
-    if (segments.length === 0 && !interimText) return;
-    const timer = setInterval(async () => {
-      await fetch("/api/transcripts/upsert", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: transcriptId ?? crypto.randomUUID(),
-          consultation_id: consultationId,
-          raw_text: fullText,
-          segments,
-          processing_status: status === "recording" ? "in_progress" : "paused",
-        }),
-      });
-    }, 8000);
-    return () => clearInterval(timer);
-  }, [consultationId, fullText, interimText, segments, status, transcriptId]);
+    if (!consultationId || hydratedRef.current) return;
+    let cancelled = false;
+
+    const hydrate = async () => {
+      try {
+        const res = await fetch(`/api/transcripts/upsert?consultation_id=${encodeURIComponent(consultationId)}`);
+        const data = await res.json();
+        if (cancelled || !res.ok) return;
+
+        const savedSegments = Array.isArray(data?.transcript?.segments) ? data.transcript.segments : [];
+        const mapped: STTSegment[] = savedSegments
+          .map((segment: any): STTSegment | null => {
+            const text = String(segment?.text ?? "").trim();
+            const id = String(segment?.id ?? "").trim() || crypto.randomUUID();
+            if (!text) return null;
+            return {
+              id,
+              text,
+              speaker: segment?.speaker === "patient" ? "patient" : "doctor",
+              timestamp: String(segment?.timestamp ?? new Date().toISOString()),
+              confidence: typeof segment?.confidence === "number" ? segment.confidence : 0,
+              is_final: typeof segment?.is_final === "boolean" ? segment.is_final : true,
+              start_ms: typeof segment?.start_ms === "number" ? segment.start_ms : undefined,
+              end_ms: typeof segment?.end_ms === "number" ? segment.end_ms : undefined,
+              language: typeof segment?.language === "string" ? segment.language : null,
+            };
+          })
+          .filter(Boolean) as STTSegment[];
+
+        if (mapped.length) {
+          setSegments((prev) => (prev.length ? prev : mapped));
+        }
+      } catch {
+        // Non-blocking: transcript hydration should not interrupt live recording.
+      } finally {
+        hydratedRef.current = true;
+      }
+    };
+
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [consultationId]);
 
   useEffect(() => {
     return () => cleanup();

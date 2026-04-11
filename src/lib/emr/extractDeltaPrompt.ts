@@ -23,6 +23,18 @@ Doctor dictation often arrives as several short segments (e.g. "I am starting yo
   - instructions: food, water, completion reminders, PRN qualifiers — only if stated
 - If only part of a medication is new, use update_fact on path medications[N] with a PARTIAL object { "dosage": "...", "frequency": "..." } so other fields are preserved (the server merges objects at medications[index]).
 
+## Instruction-heavy treatments (ORS / hydration / regimen)
+Some orders are clinically critical but do not fit a classic medicine pattern (e.g. ORS preparation and session counts).
+- NEVER drop these orders.
+- Represent them inside medications as a treatment row using the same object shape.
+- For ORS-like instructions, prefer:
+  - name: "ORS" (or spoken equivalent in English)
+  - route: "Oral"
+  - dosage/frequency/duration: fill only if clearly stated; otherwise omit
+  - instructions: include the full actionable regimen, including quantity and preparation details.
+- Example speech: "ORS 1 sachet in 1 liter water, 5 sessions" -> instructions should preserve both "1 liter" and "5 sessions".
+- If the current delta gives only additional regimen details for an existing ORS row, update that existing medications[N] entry instead of creating duplicates.
+
 ## Vitals
 Extract numeric vitals when stated with path vitals.bp_systolic, vitals.bp_diastolic, vitals.pulse_rate, vitals.respiratory_rate, vitals.temperature, vitals.spo2. Normalize units (e.g. °F→°C only if conversion is explicit). Height and weight are not required in the live delta flow.
 
@@ -50,6 +62,10 @@ Each operation:
 }
 
 You may set medications[0].dosage etc. for single-field updates when the parent object already exists.
+
+## Anti-drop rules
+- Do not retract or overwrite an existing medication/treatment row unless the speaker explicitly discontinues or replaces it.
+- If uncertain about a partially heard treatment instruction, keep the existing row and add mark_uncertain rather than removing the treatment.
 
 ## Safety
 If patient_allergies is provided, do not recommend medications that clearly violate them in new prescriptions; if the speaker orders a contraindicated drug anyway, still extract it but add mark_uncertain for "medications" or the specific index.
@@ -100,6 +116,15 @@ Every prescribed drug MUST be one object with ALL of these keys filled when the 
 - instructions: only if stated (food, water, etc.)
 
 Do not return medications as bare strings. Do not omit dosage/frequency/duration when they are spoken.
+
+## ORS and regimen orders (critical)
+- Preserve oral rehydration and regimen-style orders even when dosage/frequency are not in classic tablet format.
+- For ORS, use a medication object with:
+  - name: "ORS"
+  - route: "Oral"
+  - instructions: complete regimen text (for example: "1 sachet in 1 liter water, total 5 sessions")
+- Keep all quantitative details that matter for patient safety (liters, sachets, number of sessions, timing cues).
+- Do not drop ORS/treatment instructions in the final extraction if they appear anywhere in the transcript.
 
 ## Diagnosis
 Populate diagnosis[] with concise clinical labels derived from the transcript (e.g. "Acute pharyngitis" for throat infection).

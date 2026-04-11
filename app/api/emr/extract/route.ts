@@ -41,7 +41,7 @@ export async function POST(request: Request) {
           }),
         },
       ],
-      temperature: 0.2,
+      temperature: 0.05,
     });
 
     const parsed = JSON.parse(completion.choices[0]?.message?.content ?? "{}");
