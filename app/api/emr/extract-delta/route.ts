@@ -17,6 +17,34 @@ function getGroq() {
   return new Groq({ apiKey });
 }
 
+function parseProviderError(error: unknown): {
+  status: number;
+  code: string;
+  message: string;
+  retryable: boolean;
+} {
+  if (error instanceof Error && error.message === "Missing GROQ_API_KEY") {
+    return { status: 500, code: "missing_api_key", message: "Missing GROQ_API_KEY", retryable: false };
+  }
+
+  const status = typeof (error as any)?.status === "number" ? Number((error as any).status) : 500;
+  const rawMessage = String((error as any)?.error?.message ?? (error as any)?.message ?? "Extraction failed").trim();
+  const msg = rawMessage || "Extraction failed";
+  const lower = msg.toLowerCase();
+
+  if (status === 401 || status === 403 || lower.includes("invalid api key") || lower.includes("authentication")) {
+    return { status: 502, code: "provider_auth", message: msg, retryable: false };
+  }
+  if (status === 429 || lower.includes("rate limit") || lower.includes("quota") || lower.includes("insufficient")) {
+    return { status: 429, code: "provider_rate_limited", message: msg, retryable: true };
+  }
+  if (status >= 500) {
+    return { status: 503, code: "provider_unavailable", message: msg, retryable: true };
+  }
+
+  return { status: 500, code: "extract_delta_failed", message: msg, retryable: false };
+}
+
 export async function POST(request: Request) {
   const session = await getServerSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -121,7 +149,11 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ operations, snapshot: merged, new_cursor: newCursor });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Extraction failed" }, { status: 500 });
+    const parsed = parseProviderError(error);
+    return NextResponse.json(
+      { error: parsed.message, error_code: parsed.code, retryable: parsed.retryable },
+      { status: parsed.status }
+    );
   }
 }
 

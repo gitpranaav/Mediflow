@@ -108,6 +108,8 @@ export function ConsultationWorkspace({
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditError, setAuditError] = useState<string | null>(null);
   const extractingRef = useRef(false);
+  const deltaRetryCountRef = useRef(0);
+  const deltaRetryTimerRef = useRef<number | null>(null);
   const emrSnapshotRef = useRef<EMRSnapshot>({});
   const cursorRef = useRef<typeof cursor>(null);
   const sttSegmentsRef = useRef<TranscriptSegment[]>([]);
@@ -231,6 +233,11 @@ export function ConsultationWorkspace({
         });
         const data = await res.json();
         if (res.ok) {
+          deltaRetryCountRef.current = 0;
+          if (deltaRetryTimerRef.current != null) {
+            window.clearTimeout(deltaRetryTimerRef.current);
+            deltaRetryTimerRef.current = null;
+          }
           if (data?.snapshot) {
             emrSnapshotRef.current = data.snapshot;
             setEmrSnapshot(data.snapshot);
@@ -239,10 +246,28 @@ export function ConsultationWorkspace({
             cursorRef.current = data.new_cursor;
             setCursor(data.new_cursor);
           }
+          setSyncText(`Synced ${new Date().toLocaleTimeString("en-IN")}`);
         } else {
-          window.setTimeout(() => {
+          const retryable = Boolean(data?.retryable) || res.status === 429 || res.status >= 500;
+          const code = String(data?.error_code ?? "extract_delta_failed");
+          const message = String(data?.error ?? "Delta extraction failed");
+
+          if (!retryable || code === "provider_auth" || code === "missing_api_key") {
+            setSyncText(`Live extraction paused: ${message}`);
+            break;
+          }
+
+          deltaRetryCountRef.current += 1;
+          const backoffMs = Math.min(15000, 1200 * 2 ** Math.max(0, deltaRetryCountRef.current - 1));
+          setSyncText(`Live extraction retrying in ${Math.ceil(backoffMs / 1000)}s (${message})`);
+
+          if (deltaRetryTimerRef.current != null) {
+            window.clearTimeout(deltaRetryTimerRef.current);
+          }
+          deltaRetryTimerRef.current = window.setTimeout(() => {
+            deltaRetryTimerRef.current = null;
             void processDeltaExtraction();
-          }, 1200);
+          }, backoffMs);
           break;
         }
       }
@@ -254,6 +279,15 @@ export function ConsultationWorkspace({
   useEffect(() => {
     void processDeltaExtraction();
   }, [processDeltaExtraction, stt.segments]);
+
+  useEffect(() => {
+    return () => {
+      if (deltaRetryTimerRef.current != null) {
+        window.clearTimeout(deltaRetryTimerRef.current);
+        deltaRetryTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const liveAllergyAlert = useMemo(
     () => detectRealtimeAllergyAlert(patientAllergies, `${stt.fullText ?? ""} ${stt.interimText ?? ""}`),
