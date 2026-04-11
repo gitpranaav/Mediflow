@@ -85,7 +85,7 @@ export async function PATCH(request: Request, { params }: Params) {
   const consultationAfter = consultation ?? consultationBefore;
 
   const shouldFinalize = String(payload.status ?? "") === "completed";
-  if (shouldFinalize && consultation.patient_id) {
+  if (shouldFinalize && consultationAfter.patient_id) {
     const emr = await db.collection("emr_entries").findOne({ consultation_id: consultationObjectId });
     const snapshot = (emr?.snapshot ?? {}) as Record<string, unknown>;
     const medications = asMedicationArray(snapshot.medications);
@@ -96,7 +96,7 @@ export async function PATCH(request: Request, { params }: Params) {
       {
         $set: {
           consultation_id: consultationObjectId,
-          patient_id: consultation.patient_id,
+          patient_id: consultationAfter.patient_id,
           doctor_id: doctorObjectId,
           medications,
           diagnosis_text: diagnosisText,
@@ -110,17 +110,17 @@ export async function PATCH(request: Request, { params }: Params) {
       { upsert: true }
     );
 
-    const existingHistory = await db.collection("patient_history").findOne({ patient_id: consultation.patient_id });
+    const existingHistory = await db.collection("patient_history").findOne({ patient_id: consultationAfter.patient_id });
     const existingCore = ((existingHistory as { core?: Record<string, unknown> } | null)?.core ?? {}) as Record<string, unknown>;
     const existingProblemList = asStringArray(existingCore.problem_list);
     const mergedProblemList = Array.from(new Set([...existingProblemList, ...diagnosisText]));
     const activeMeds = medications.map((med) => med.name);
 
     await db.collection("patient_history").updateOne(
-      { patient_id: consultation.patient_id },
+      { patient_id: consultationAfter.patient_id },
       {
         $set: {
-          patient_id: consultation.patient_id,
+          patient_id: consultationAfter.patient_id,
           core: {
             ...existingCore,
             problem_list: mergedProblemList,
@@ -140,7 +140,7 @@ export async function PATCH(request: Request, { params }: Params) {
     const doctor = await db.collection("users").findOne({ _id: doctorObjectId }, { projection: { specialty_code: 1 } });
     const specialtyCode = normalizeText((doctor as { specialty_code?: unknown } | null)?.specialty_code) || "general";
     const specialtyFilter = {
-      patient_id: consultation.patient_id,
+      patient_id: consultationAfter.patient_id,
       doctor_id: doctorObjectId,
       specialty_code: specialtyCode,
     };
