@@ -98,7 +98,7 @@ export function useSTT({ consultationId, transcriptId, chunkMs = 250 }: UseSTTAr
       const auth = await getDeepgramToken();
 
       const params = new URLSearchParams({
-        model: "nova-2",
+        model: "nova-3",
         punctuate: "true",
         smart_format: "true",
         interim_results: "true",

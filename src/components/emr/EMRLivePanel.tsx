@@ -33,6 +33,28 @@ function emptyMedication(): EMRMedication {
   };
 }
 
+function formatBloodPressure(vitals: EMRSnapshot["vitals"]) {
+  const systolic = vitals?.bp_systolic;
+  const diastolic = vitals?.bp_diastolic;
+  if (systolic == null && diastolic == null) return "";
+  return `${systolic ?? ""}${systolic != null || diastolic != null ? "/" : ""}${diastolic ?? ""}`;
+}
+
+function parseBloodPressure(value: string) {
+  const text = value.trim();
+  if (!text) {
+    return { bp_systolic: null as number | null, bp_diastolic: null as number | null };
+  }
+
+  const match = text.match(/^(\d{2,3})(?:\s*\/\s*(\d{2,3}))?$/);
+  if (!match) return null;
+
+  return {
+    bp_systolic: Number(match[1]) || null,
+    bp_diastolic: match[2] ? Number(match[2]) || null : null,
+  };
+}
+
 type IcdHit = { id: string; code: string; description: string };
 
 function MedicationIcdLookup({
@@ -127,11 +149,16 @@ export function EMRLivePanel({
 }) {
   const [saveText, setSaveText] = useState("Not saved yet");
   const [allergyBanner, setAllergyBanner] = useState<string | null>(null);
+  const [bpDraft, setBpDraft] = useState(formatBloodPressure(snapshot.vitals));
   const debounceRef = useRef<number | null>(null);
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   const onChangeRef = useRef(onChangeSnapshot);
   onChangeRef.current = onChangeSnapshot;
+
+  useEffect(() => {
+    setBpDraft(formatBloodPressure(snapshot.vitals));
+  }, [snapshot.vitals?.bp_systolic, snapshot.vitals?.bp_diastolic]);
 
   const medications = snapshot.medications?.length ? snapshot.medications : [emptyMedication()];
 
@@ -266,38 +293,63 @@ export function EMRLivePanel({
       ) : null}
 
       {/* Vitals */}
-      <section className="rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-3 shadow-[var(--shadow-sm)]">
-        <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-muted))]">Vitals</h4>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7">
+      <section className="rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5 shadow-[var(--shadow-sm)]">
+        <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-muted))]">Vitals</h4>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          <div className={fieldWrap}>
+            <label className={labelCls} htmlFor="vital-bp">
+              BP
+            </label>
+            <input
+              id="vital-bp"
+              type="text"
+              inputMode="numeric"
+              className={cn(inputCls, "h-8 text-xs")}
+              value={bpDraft}
+              placeholder="120/80"
+              onChange={(e) => setBpDraft(e.target.value)}
+              onBlur={() => {
+                const next = parseBloodPressure(bpDraft);
+                if (!next) {
+                  setBpDraft(formatBloodPressure(snapshot.vitals));
+                  return;
+                }
+                onChangeSnapshot({
+                  ...snapshot,
+                  vitals: { ...(snapshot.vitals ?? {}), ...next },
+                });
+              }}
+            />
+          </div>
           {(
             [
-              ["bp_systolic", "BP systolic"],
-              ["bp_diastolic", "BP diastolic"],
-              ["heart_rate", "Heart rate"],
+              ["pulse_rate", "Pulse rate"],
+              ["respiratory_rate", "Respiratory rate"],
               ["spo2", "SpO₂ (%)"],
               ["temperature", "Temp (°C)"],
-              ["weight", "Weight (kg)"],
-              ["height", "Height (cm)"],
             ] as const
-          ).map(([key, lbl]) => (
-            <div key={key} className={fieldWrap}>
-              <label className={labelCls} htmlFor={`vital-${key}`}>
-                {lbl}
-              </label>
-              <input
-                id={`vital-${key}`}
-                type="number"
-                className={inputCls}
-                value={(snapshot.vitals?.[key] as number | null | undefined) ?? ""}
-                onChange={(e) =>
-                  onChangeSnapshot({
-                    ...snapshot,
-                    vitals: { ...(snapshot.vitals ?? {}), [key]: Number(e.target.value) || null },
-                  })
-                }
-              />
-            </div>
-          ))}
+          ).map(([key, lbl]) => {
+            const value = (key === "pulse_rate" ? snapshot.vitals?.pulse_rate ?? snapshot.vitals?.heart_rate : snapshot.vitals?.[key]) as number | null | undefined;
+            return (
+              <div key={key} className={fieldWrap}>
+                <label className={labelCls} htmlFor={`vital-${key}`}>
+                  {lbl}
+                </label>
+                <input
+                  id={`vital-${key}`}
+                  type="number"
+                  className={cn(inputCls, "h-8 text-xs")}
+                  value={value ?? ""}
+                  onChange={(e) =>
+                    onChangeSnapshot({
+                      ...snapshot,
+                      vitals: { ...(snapshot.vitals ?? {}), [key]: Number(e.target.value) || null },
+                    })
+                  }
+                />
+              </div>
+            );
+          })}
         </div>
       </section>
 

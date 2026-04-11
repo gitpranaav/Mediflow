@@ -5,7 +5,9 @@ export type Confidence = "high" | "medium" | "low";
 export type EMRVitals = {
   bp_systolic?: number | null;
   bp_diastolic?: number | null;
+  pulse_rate?: number | null;
   heart_rate?: number | null;
+  respiratory_rate?: number | null;
   temperature?: number | null;
   spo2?: number | null;
   weight?: number | null;

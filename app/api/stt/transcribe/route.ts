@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const deepgram = new DeepgramClient({ apiKey } as any);
     const response = await (deepgram as any).listen.prerecorded.transcribeFile(buffer, {
-      model: "nova-2-medical",
+      model: "nova-3-medical",
       smart_format: true,
       punctuate: true,
     });

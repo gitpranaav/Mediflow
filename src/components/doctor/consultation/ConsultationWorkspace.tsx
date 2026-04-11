@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock3, Printer } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock3, Printer } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -56,6 +56,30 @@ function formatElapsed(seconds: number) {
   return `${h}:${m}:${s}`;
 }
 
+function formatBloodPressure(vitals: EMRSnapshot["vitals"]) {
+  const systolic = vitals?.bp_systolic;
+  const diastolic = vitals?.bp_diastolic;
+  if (systolic == null && diastolic == null) return "";
+  return `${systolic ?? ""}${systolic != null || diastolic != null ? "/" : ""}${diastolic ?? ""}`;
+}
+
+function parseBloodPressure(value: string) {
+  const text = value.trim();
+  if (!text) {
+    return { bp_systolic: null as number | null, bp_diastolic: null as number | null };
+  }
+
+  const match = text.match(/^(\d{2,3})(?:\s*\/\s*(\d{2,3}))?$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    bp_systolic: Number(match[1]) || null,
+    bp_diastolic: match[2] ? Number(match[2]) || null : null,
+  };
+}
+
 export function ConsultationWorkspace({
   consultationId,
   patientId,
@@ -67,6 +91,7 @@ export function ConsultationWorkspace({
   const [isEnded, setIsEnded] = useState(false);
   const [patientAllergies, setPatientAllergies] = useState<string[]>([]);
   const [emrSnapshot, setEmrSnapshot] = useState<EMRSnapshot>({});
+  const [historyOpen, setHistoryOpen] = useState(true);
   const [cursor, setCursor] = useState<{ last_final_segment_id?: string | null; last_final_index?: number | null } | null>(null);
   const extractingRef = useRef(false);
   const emrSnapshotRef = useRef<EMRSnapshot>({});
@@ -272,7 +297,7 @@ export function ConsultationWorkspace({
         </CardContent>
       </Card>
 
-      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-2 lg:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,0.85fr)]">
+      <div className={"grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-2 lg:grid-cols-2 xl:gap-2 " + (historyOpen ? "xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,22rem)]" : "xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_3.25rem]") }>
         <Card className="flex min-h-0 min-w-0 flex-col lg:min-h-[240px] xl:min-h-0">
           <CardHeader className="shrink-0 py-2 pb-1">
             <CardTitle className="text-sm">STT + Transcript</CardTitle>
@@ -301,8 +326,23 @@ export function ConsultationWorkspace({
           </CardContent>
         </Card>
         <div className="flex min-h-0 min-w-0 flex-col overflow-hidden lg:col-span-2 xl:col-span-1">
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <PatientHistoryPanel consultationId={consultationId} />
+          <div className={historyOpen ? "mb-2 flex justify-start" : "mb-2 flex justify-center"}>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-9 w-9 rounded-full px-0"
+              onClick={() => setHistoryOpen((open) => !open)}
+              aria-expanded={historyOpen}
+              aria-label={historyOpen ? "Hide patient history" : "Show patient history"}
+            >
+              {historyOpen ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+            </Button>
+          </div>
+          <div className={"min-h-0 flex-1 overflow-hidden transition-all duration-300 ease-out " + (historyOpen ? "opacity-100 translate-x-0 pl-4" : "pointer-events-none opacity-0 translate-x-2 pl-0")}>
+            <div className="h-full overflow-y-auto">
+              <PatientHistoryPanel consultationId={consultationId} />
+            </div>
           </div>
         </div>
       </div>

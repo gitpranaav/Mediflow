@@ -24,10 +24,10 @@ Doctor dictation often arrives as several short segments (e.g. "I am starting yo
 - If only part of a medication is new, use update_fact on path medications[N] with a PARTIAL object { "dosage": "...", "frequency": "..." } so other fields are preserved (the server merges objects at medications[index]).
 
 ## Vitals
-Extract numeric vitals when stated with path vitals.bp_systolic, vitals.bp_diastolic, vitals.heart_rate, vitals.temperature, vitals.spo2, vitals.weight, vitals.height. Normalize units (e.g. °F→°C only if conversion is explicit).
+Extract numeric vitals when stated with path vitals.bp_systolic, vitals.bp_diastolic, vitals.pulse_rate, vitals.respiratory_rate, vitals.temperature, vitals.spo2. Normalize units (e.g. °F→°C only if conversion is explicit). Height and weight are not required in the live delta flow.
 
 ## Paths (exact strings)
-- vitals.bp_systolic, vitals.bp_diastolic, vitals.heart_rate, vitals.temperature, vitals.spo2, vitals.weight, vitals.height
+- vitals.bp_systolic, vitals.bp_diastolic, vitals.pulse_rate, vitals.respiratory_rate, vitals.temperature, vitals.spo2
 - chief_complaint (string)
 - symptoms (array of strings) — set_fact path "symptoms"
 - diagnosis_text (array of strings)
@@ -74,7 +74,7 @@ All string values MUST be in English (translate faithfully from Hindi or other l
   "physical_examination": string | null,
   "assessment": string | null,
   "plan": string | null,
-  "vitals": { "bp_systolic": number|null, "bp_diastolic": number|null, "heart_rate": number|null, "temperature": number|null, "spo2": number|null, "weight": number|null, "height": number|null },
+  "vitals": { "bp_systolic": number|null, "bp_diastolic": number|null, "pulse_rate": number|null, "respiratory_rate": number|null, "temperature": number|null, "spo2": number|null },
   "medications": Array<{
     "name": string,
     "dosage": string,
