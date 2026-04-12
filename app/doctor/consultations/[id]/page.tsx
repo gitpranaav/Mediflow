@@ -50,7 +50,12 @@ export default async function ConsultationDetailPage({ params }: { params: Promi
             >
               Print Prescription
             </Link>
-            <Button variant="secondary">Export PDF (step 15 hook ready)</Button>
+            <Link
+              href={`/doctor/consultation/${String(data._id)}`}
+              className="inline-flex h-10 items-center justify-center rounded-[calc(var(--radius)-2px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] px-4 text-sm font-medium text-[hsl(var(--text-primary))] shadow-[var(--shadow-sm)] hover:bg-[hsl(var(--bg-secondary))]"
+            >
+              Open Consultation Dashboard
+            </Link>
           </div>
         </CardContent>
       </Card>

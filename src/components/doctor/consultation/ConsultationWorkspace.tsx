@@ -1,12 +1,13 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Clock3, Printer } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock3, PanelRightClose, PanelRightOpen, Printer } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/src/components/ui/Badge";
 import { Button } from "@/src/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/Card";
+import { Input } from "@/src/components/ui/Input";
 import { EMRLivePanel } from "@/src/components/emr/EMRLivePanel";
 import { STTRecorder } from "@/src/components/stt/STTRecorder";
 import { TranscriptViewer } from "@/src/components/stt/TranscriptViewer";
@@ -21,6 +22,7 @@ interface WorkspaceProps {
   consultationType: string;
   initialStatus?: string | null;
   initialStartedAt: string | null;
+  initialFollowUpDueAt?: string | null;
 }
 
 type AuditEvent = {
@@ -91,6 +93,91 @@ function parseBloodPressure(value: string) {
   };
 }
 
+const FOLLOW_UP_INTENT_REGEX = /(follow[\s-]?up|come back|review|meet me|show me again|visit again|phir se|wapas|dobara|dikha|dikhana)/i;
+const NUMBER_WORDS: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  ek: 1,
+  do: 2,
+  teen: 3,
+  char: 4,
+  chaar: 4,
+  paanch: 5,
+  chhe: 6,
+  cheh: 6,
+  saat: 7,
+  aath: 8,
+  nau: 9,
+  das: 10,
+};
+
+function parseCountToken(token: string): number | null {
+  const normalized = token.toLowerCase().trim();
+  if (!normalized) return null;
+  if (/^\d+$/.test(normalized)) return Number(normalized);
+  return NUMBER_WORDS[normalized] ?? null;
+}
+
+function inferFollowUpFromTranscript(transcript: string): { days: number; evidence: string } | null {
+  const cleaned = String(transcript ?? "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return null;
+
+  const chunks = cleaned
+    .split(/[.!?\n।]+/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+
+  for (let i = chunks.length - 1; i >= 0; i -= 1) {
+    const chunk = chunks[i];
+    if (!FOLLOW_UP_INTENT_REGEX.test(chunk)) continue;
+
+    const dayMatch = chunk.match(/(?:after|in)?\s*(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|ek|do|teen|char|chaar|paanch|chhe|cheh|saat|aath|nau|das)\s*(?:day|days|din)\b/i);
+    if (dayMatch) {
+      const count = parseCountToken(dayMatch[1]);
+      if (count && count > 0) return { days: count, evidence: chunk };
+    }
+
+    const weekMatch = chunk.match(/(?:after|in)?\s*(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|ek|do|teen|char|chaar|paanch|chhe|cheh|saat|aath|nau|das|a)\s*(?:week|weeks|hafta|hafte|hafton)\b/i);
+    if (weekMatch) {
+      const token = weekMatch[1].toLowerCase() === "a" ? "one" : weekMatch[1];
+      const count = parseCountToken(token);
+      if (count && count > 0) return { days: count * 7, evidence: chunk };
+    }
+  }
+
+  return null;
+}
+
+function toDateInputValue(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function addDays(base: Date, days: number) {
+  const next = new Date(base);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function asIsoFromDateInput(value: string) {
+  if (!value?.trim()) return null;
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
 export function ConsultationWorkspace({
   consultationId,
   patientId,
@@ -98,6 +185,7 @@ export function ConsultationWorkspace({
   consultationType,
   initialStatus,
   initialStartedAt,
+  initialFollowUpDueAt,
 }: WorkspaceProps) {
   const [syncText, setSyncText] = useState("Sync pending");
   const [isEnded, setIsEnded] = useState(String(initialStatus ?? "").toLowerCase() === "completed");
@@ -107,7 +195,17 @@ export function ConsultationWorkspace({
   const [cursor, setCursor] = useState<{ last_final_segment_id?: string | null; last_final_index?: number | null } | null>(null);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [auditExpanded, setAuditExpanded] = useState(false);
+  const [followUpOpen, setFollowUpOpen] = useState(false);
+  const [followUpDate, setFollowUpDate] = useState<string>(
+    initialFollowUpDueAt ? toDateInputValue(new Date(initialFollowUpDueAt)) : ""
+  );
+  const [followUpEdited, setFollowUpEdited] = useState(Boolean(initialFollowUpDueAt));
+  const [followUpSaving, setFollowUpSaving] = useState(false);
+  const [followUpNotice, setFollowUpNotice] = useState<string | null>(null);
   const extractingRef = useRef(false);
+  const finalExtractionDoneRef = useRef(false);
+  const finalExtractionInFlightRef = useRef(false);
   const deltaRetryCountRef = useRef(0);
   const deltaRetryTimerRef = useRef<number | null>(null);
   const emrSnapshotRef = useRef<EMRSnapshot>({});
@@ -294,13 +392,52 @@ export function ConsultationWorkspace({
     [patientAllergies, stt.fullText, stt.interimText]
   );
 
-  const endConsultation = async () => {
-    if (stt.status !== "idle") {
-      await stt.stop();
-    }
+  const followUpSuggestion = useMemo(() => inferFollowUpFromTranscript(stt.fullText ?? ""), [stt.fullText]);
 
-    // Persist latest transcript before finalize
-    if (stt.fullText?.trim()) {
+  useEffect(() => {
+    if (!followUpSuggestion || followUpEdited) return;
+    setFollowUpDate(toDateInputValue(addDays(new Date(), followUpSuggestion.days)));
+  }, [followUpEdited, followUpSuggestion]);
+
+  const saveFollowUp = useCallback(async () => {
+    setFollowUpSaving(true);
+    setFollowUpNotice(null);
+    try {
+      const followUpDueAt = asIsoFromDateInput(followUpDate);
+      const payload: Record<string, unknown> = {
+        follow_up_due_at: followUpDueAt,
+      };
+      if (followUpSuggestion?.days) payload.follow_up_in_days = followUpSuggestion.days;
+
+      const res = await fetch(`/api/consultations/${consultationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setFollowUpNotice(String(data?.error ?? "Failed to save follow-up"));
+        return;
+      }
+      setFollowUpNotice(followUpDueAt ? "Follow-up saved" : "Follow-up cleared");
+      setSyncText(`Synced ${new Date().toLocaleTimeString("en-IN")}`);
+      setFollowUpOpen(false);
+    } finally {
+      setFollowUpSaving(false);
+    }
+  }, [consultationId, followUpDate, followUpSuggestion?.days]);
+
+  const runFinalExtraction = useCallback(async () => {
+    if (finalExtractionDoneRef.current || finalExtractionInFlightRef.current) return;
+    finalExtractionInFlightRef.current = true;
+
+    try {
+      const transcriptText = stt.fullText?.trim() ?? "";
+      if (!transcriptText) {
+        finalExtractionDoneRef.current = true;
+        return;
+      }
+
       await fetch("/api/transcripts/upsert", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -311,20 +448,39 @@ export function ConsultationWorkspace({
           processing_status: "completed",
         }),
       });
-    }
 
-    // Final full-context extraction pass (optional but improves summary quality).
-    if (stt.fullText?.trim()) {
       const extractRes = await fetch("/api/emr/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ consultation_id: consultationId, transcript_text: stt.fullText }),
+        body: JSON.stringify({ consultation_id: consultationId, transcript_text: transcriptText }),
       });
-      const extractData = await extractRes.json();
+      const extractData = await extractRes.json().catch(() => ({}));
       if (extractRes.ok && extractData?.snapshot) {
         setEmrSnapshot(extractData.snapshot);
+        setSyncText(`Finalized ${new Date().toLocaleTimeString("en-IN")}`);
+        finalExtractionDoneRef.current = true;
+      } else if (!extractRes.ok) {
+        setSyncText(String(extractData?.error ?? "Final extraction failed"));
       }
+    } finally {
+      finalExtractionInFlightRef.current = false;
     }
+  }, [consultationId, stt.fullText, stt.segments]);
+
+  const handleStopClick = useCallback(async () => {
+    if (stt.status !== "idle") {
+      await stt.stop();
+    }
+    await runFinalExtraction();
+  }, [runFinalExtraction, stt]);
+
+  const endConsultation = async () => {
+    if (stt.status !== "idle") {
+      await stt.stop();
+    }
+
+    await runFinalExtraction();
+
     await fetch(`/api/consultations/${consultationId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -359,6 +515,17 @@ export function ConsultationWorkspace({
               <Clock3 className="mr-1 h-3.5 w-3.5" />
               {formatElapsed(elapsed)}
             </Badge>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setFollowUpOpen((v) => !v);
+                if (!followUpEdited && followUpSuggestion?.days) {
+                  setFollowUpDate(toDateInputValue(addDays(new Date(), followUpSuggestion.days)));
+                }
+              }}
+            >
+              {followUpDate ? `Follow-up: ${followUpDate}` : "Set Follow-up"}
+            </Button>
             <Button variant="danger" onClick={endConsultation} disabled={isEnded}>
               End Consultation
             </Button>
@@ -372,6 +539,45 @@ export function ConsultationWorkspace({
             )}
           </div>
         </CardContent>
+        {followUpOpen ? (
+          <CardContent className="border-t border-[hsl(var(--border))] py-3">
+            <div className="flex flex-col gap-2 md:flex-row md:items-end">
+              <div className="w-full max-w-xs">
+                <Input
+                  type="date"
+                  label="Next follow-up date"
+                  value={followUpDate}
+                  onChange={(event) => {
+                    setFollowUpDate(event.target.value);
+                    setFollowUpEdited(true);
+                  }}
+                />
+              </div>
+              <Button variant="secondary" onClick={() => {
+                setFollowUpDate("");
+                setFollowUpEdited(true);
+              }}>
+                Clear
+              </Button>
+              <Button onClick={saveFollowUp} loading={followUpSaving}>
+                Save Follow-up
+              </Button>
+              {followUpSuggestion?.days ? (
+                <p className="text-xs text-[hsl(var(--text-muted))]">
+                  Suggested from transcript: {followUpSuggestion.days} day(s)
+                </p>
+              ) : (
+                <p className="text-xs text-[hsl(var(--text-muted))]">No follow-up phrase detected yet</p>
+              )}
+            </div>
+            {followUpSuggestion?.evidence ? (
+              <p className="mt-1 truncate text-[11px] text-[hsl(var(--text-muted))]" title={followUpSuggestion.evidence}>
+                Evidence: {followUpSuggestion.evidence}
+              </p>
+            ) : null}
+            {followUpNotice ? <p className="mt-1 text-xs text-[hsl(var(--text-secondary))]">{followUpNotice}</p> : null}
+          </CardContent>
+        ) : null}
       </Card>
 
       <div className={"grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-2 lg:grid-cols-2 xl:gap-2 " + (historyOpen ? "xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,22rem)]" : "xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_3.25rem]") }>
@@ -385,7 +591,7 @@ export function ConsultationWorkspace({
                 status={stt.status}
                 error={stt.error}
                 onStart={stt.start}
-                onStop={stt.stop}
+                onStop={handleStopClick}
                 onPause={stt.pause}
                 onResume={stt.resume}
                 disabled={isEnded}
@@ -433,33 +639,69 @@ export function ConsultationWorkspace({
         </div>
       </div>
 
-      <Card>
-        <CardHeader className="py-2 pb-1">
-          <CardTitle className="text-sm">Audit Trail</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 px-3 pb-3 pt-0">
-          {auditError ? <p className="text-xs text-[hsl(var(--danger))]">{auditError}</p> : null}
-          {(auditEvents ?? []).length ? (
-            <div className="max-h-36 space-y-1 overflow-y-auto pr-1">
-              {auditEvents.slice(0, 12).map((event) => (
-                <div key={event.id} className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] px-2 py-1.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-medium text-[hsl(var(--text-primary))]">#{event.sequence_no ?? "-"} {event.event_type ?? "event"}</p>
-                    <p className="text-[10px] text-[hsl(var(--text-muted))]">{event.created_at ? new Date(event.created_at).toLocaleTimeString("en-IN") : ""}</p>
-                  </div>
-                  <p className="text-[10px] text-[hsl(var(--text-secondary))]">{event.source ?? "-"} · {event.actor_role ?? "-"}</p>
-                  {event.changed_paths.length ? (
-                    <p className="truncate text-[10px] text-[hsl(var(--text-muted))]" title={event.changed_paths.join(", ")}>changed: {event.changed_paths.slice(0, 4).join(", ")}</p>
-                  ) : null}
+      {!auditExpanded ? (
+        <div className="fixed bottom-4 right-4 z-40">
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-10 rounded-full px-4 shadow-[var(--shadow-md)]"
+            onClick={() => setAuditExpanded(true)}
+            aria-label="Open audit trail"
+          >
+            <PanelRightOpen className="h-4 w-4" />
+            Audit Trail
+          </Button>
+        </div>
+      ) : (
+        <div className="pointer-events-none fixed bottom-4 right-4 z-40 w-[min(92vw,22rem)]">
+          <div className="pointer-events-auto">
+            <Card className="overflow-hidden shadow-[var(--shadow-md)]">
+              <CardHeader className="py-2 pb-1">
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-sm">Audit Trail</CardTitle>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="h-8 px-2 text-xs"
+                    onClick={() => setAuditExpanded(false)}
+                    aria-label="Collapse audit trail"
+                  >
+                    <PanelRightClose className="h-4 w-4" />
+                    Collapse
+                  </Button>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-[hsl(var(--text-muted))]">No audit events yet.</p>
-          )}
-          <p className="text-xs text-[hsl(var(--text-muted))]">{syncText}</p>
-        </CardContent>
-      </Card>
+              </CardHeader>
+              <CardContent className="space-y-2 px-3 pb-3 pt-0">
+                <p className="text-xs text-[hsl(var(--text-muted))]">{syncText}</p>
+                {auditError ? <p className="text-xs text-[hsl(var(--danger))]">{auditError}</p> : null}
+                {(auditEvents ?? []).length ? (
+                  <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
+                    {auditEvents.slice(0, 8).map((event) => (
+                      <div
+                        key={event.id}
+                        className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] px-2 py-1.5 transition-colors hover:bg-[hsl(var(--bg-secondary))]"
+                        title={event.changed_paths.join(", ")}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-medium text-[hsl(var(--text-primary))]">#{event.sequence_no ?? "-"} {event.event_type ?? "event"}</p>
+                          <p className="text-[10px] text-[hsl(var(--text-muted))]">{event.created_at ? new Date(event.created_at).toLocaleTimeString("en-IN") : ""}</p>
+                        </div>
+                        <p className="text-[10px] text-[hsl(var(--text-secondary))]">{event.source ?? "-"} · {event.actor_role ?? "-"}</p>
+                        {event.changed_paths.length ? (
+                          <p className="truncate text-[10px] text-[hsl(var(--text-muted))]">changed: {event.changed_paths.slice(0, 3).join(", ")}</p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[hsl(var(--text-muted))]">No audit events yet.</p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

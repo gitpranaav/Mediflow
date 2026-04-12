@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/src/components/ui/Button";
@@ -56,6 +56,15 @@ function parseBloodPressure(value: string) {
 }
 
 type IcdHit = { id: string; code: string; description: string };
+
+type MedicationHit = {
+  id: string;
+  name: string;
+  generic_name?: string | null;
+  default_strength?: string | null;
+  default_route?: string | null;
+  aliases?: string[] | null;
+};
 
 function MedicationIcdLookup({
   code,
@@ -132,6 +141,93 @@ function MedicationIcdLookup({
   );
 }
 
+function MedicationAutocompleteInput({
+  value,
+  onChange,
+  onPick,
+  placeholder = "Search medicine",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onPick: (hit: MedicationHit) => void;
+  placeholder?: string;
+}) {
+  const [query, setQuery] = useState(value);
+  const [hits, setHits] = useState<MedicationHit[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setQuery(value);
+  }, [value]);
+
+  useEffect(() => {
+    const t = window.setTimeout(async () => {
+      const q = query.trim();
+      if (!q) {
+        setHits([]);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      const res = await fetch(`/api/medications/search?q=${encodeURIComponent(q)}&limit=8`);
+      const data = await res.json();
+      setHits(Array.isArray(data.medications) ? data.medications : []);
+      setLoading(false);
+    }, 240);
+    return () => window.clearTimeout(t);
+  }, [query]);
+
+  return (
+    <div className="space-y-1">
+      <input
+        className={cn(inputCls, "h-8 min-w-[180px] px-2 text-xs")}
+        value={query}
+        placeholder={placeholder}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          const next = e.target.value;
+          setQuery(next);
+          onChange(next);
+          setOpen(true);
+        }}
+      />
+      {open ? (
+        <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] shadow-[var(--shadow-sm)]">
+          {loading ? <p className="px-2 py-1.5 text-xs text-[hsl(var(--text-muted))]">Searching…</p> : null}
+          {!loading && query.trim() && !hits.length ? (
+            <p className="px-2 py-1.5 text-xs text-[hsl(var(--text-muted))]">No medicine suggestions</p>
+          ) : null}
+          {hits.length ? (
+            <ul className="max-h-48 overflow-auto">
+              {hits.map((hit) => (
+                <li key={hit.id}>
+                  <button
+                    type="button"
+                    className="flex w-full flex-col gap-0.5 px-2 py-1.5 text-left text-xs hover:bg-[hsl(var(--bg-secondary))]"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      setQuery(hit.name);
+                      onChange(hit.name);
+                      onPick(hit);
+                      setOpen(false);
+                    }}
+                  >
+                    <span className="font-medium text-[hsl(var(--text-primary))]">{hit.name}</span>
+                    <span className="text-[hsl(var(--text-muted))]">
+                      {hit.generic_name || hit.default_strength || hit.default_route ? [hit.generic_name, hit.default_strength, hit.default_route].filter(Boolean).join(" · ") : "Common medicine"}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function EMRLivePanel({
   consultationId,
   snapshot,
@@ -149,6 +245,7 @@ export function EMRLivePanel({
 }) {
   const [saveText, setSaveText] = useState("Not saved yet");
   const [allergyBanner, setAllergyBanner] = useState<string | null>(null);
+  const [dismissedAllergyBanner, setDismissedAllergyBanner] = useState<string | null>(null);
   const [bpDraft, setBpDraft] = useState(formatBloodPressure(snapshot.vitals));
   const debounceRef = useRef<number | null>(null);
   const snapshotRef = useRef(snapshot);
@@ -263,35 +360,41 @@ export function EMRLivePanel({
   }, [diagnosisIcdSig, diagnosisItems]);
 
   const setMeds = (next: EMRMedication[]) => {
-    const cleaned = next.filter((m) => m.name?.trim());
     onChangeSnapshot({
       ...snapshot,
-      medications: cleaned.length ? cleaned : [emptyMedication()],
+      medications: next.length ? next : [emptyMedication()],
     });
   };
 
   const combinedAllergyBanner = [liveAllergyAlert, allergyBanner].filter(Boolean).join(" · ");
+  const visibleAllergyBanner = combinedAllergyBanner && dismissedAllergyBanner !== combinedAllergyBanner ? combinedAllergyBanner : null;
+
+  useEffect(() => {
+    if (!combinedAllergyBanner && dismissedAllergyBanner) {
+      setDismissedAllergyBanner(null);
+    }
+  }, [combinedAllergyBanner, dismissedAllergyBanner]);
 
   return (
     <div className="flex min-h-0 w-full min-w-0 flex-col gap-3 pb-1 text-[hsl(var(--text-secondary))]">
-      {combinedAllergyBanner ? (
+      {visibleAllergyBanner ? (
         <div
           className="shrink-0 rounded-[var(--radius)] border border-[hsl(var(--danger))] bg-[hsl(var(--danger)/0.12)] px-3 py-2 text-xs font-medium text-[hsl(var(--danger))]"
           role="alert"
         >
-          {combinedAllergyBanner}
+          <div className="flex items-start justify-between gap-2">
+            <p className="min-w-0 flex-1">{visibleAllergyBanner}</p>
+            <button
+              type="button"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[hsl(var(--danger)/0.3)] text-[hsl(var(--danger))] transition-colors hover:bg-[hsl(var(--danger)/0.12)]"
+              aria-label="Dismiss allergy alert"
+              onClick={() => setDismissedAllergyBanner(visibleAllergyBanner)}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
       ) : null}
-      {patientAllergies.length ? (
-        <div
-          className="shrink-0 rounded-[var(--radius)] border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] px-3 py-2 text-xs text-[hsl(var(--text-secondary))]"
-          role="status"
-        >
-          <span className="font-semibold text-[hsl(var(--text-primary))]">Allergies on file: </span>
-          {patientAllergies.join(", ")}
-        </div>
-      ) : null}
-
       {/* Vitals */}
       <section className="rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5 shadow-[var(--shadow-sm)]">
         <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-muted))]">Vitals</h4>
@@ -471,7 +574,7 @@ export function EMRLivePanel({
             size="sm"
             className="h-8 text-xs"
             iconLeft={<Plus className="h-3.5 w-3.5" />}
-            onClick={() => setMeds([...medications, emptyMedication()])}
+              onClick={() => setMeds([...medications, emptyMedication()])}
           >
             Add medication
           </Button>
@@ -493,12 +596,21 @@ export function EMRLivePanel({
               {medications.map((med, index) => (
                 <tr key={index} className="border-t border-[hsl(var(--border))] bg-[hsl(var(--bg-card))]">
                   <td className="p-2 align-top">
-                    <input
-                      className={cn(inputCls, "h-8 min-w-[150px] px-2 text-xs")}
+                    <MedicationAutocompleteInput
                       value={med.name}
-                      onChange={(e) => {
+                      onChange={(value) => {
                         const next = [...medications];
-                        next[index] = { ...next[index], name: e.target.value };
+                        next[index] = { ...next[index], name: value };
+                        setMeds(next);
+                      }}
+                      onPick={(hit) => {
+                        const next = [...medications];
+                        next[index] = {
+                          ...next[index],
+                          name: hit.name,
+                          dosage: next[index].dosage || hit.default_strength || next[index].dosage,
+                          route: next[index].route || hit.default_route || next[index].route,
+                        };
                         setMeds(next);
                       }}
                     />
@@ -642,27 +754,6 @@ export function EMRLivePanel({
             <p className="text-xs text-[hsl(var(--text-muted))]">Add diagnosis text to manage ICD-10 mapping.</p>
           )}
         </div>
-      </section>
-
-      {/* Needs confirmation */}
-      <section className="rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-3 shadow-[var(--shadow-sm)]">
-        <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[hsl(var(--text-muted))]">
-          Needs confirmation
-        </h4>
-        {(snapshot.needs_confirmation?.length ?? 0) > 0 ? (
-          <ul className="flex flex-wrap gap-1.5">
-            {snapshot.needs_confirmation!.map((path) => (
-              <li
-                key={path}
-                className="rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--accent)/0.08)] px-2.5 py-0.5 text-xs text-[hsl(var(--text-primary))]"
-              >
-                {path}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-xs text-[hsl(var(--text-muted))]">—</p>
-        )}
       </section>
 
       <div className="flex shrink-0 items-center justify-between border-t border-[hsl(var(--border))] pt-3">

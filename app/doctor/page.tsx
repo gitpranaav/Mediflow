@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CalendarDays, ClipboardList, Clock3, Users } from "lucide-react";
+import { CalendarDays, Clock3, Users } from "lucide-react";
 
 import { ConsultationSparkline } from "@/src/components/doctor/dashboard/ConsultationSparkline";
 import { StartConsultationModal } from "@/src/components/doctor/dashboard/StartConsultationModal";
@@ -77,14 +77,13 @@ export default async function DoctorDashboardPage() {
   const doctorObjectId = new ObjectId(session.uid);
   const doctorId = session.uid;
 
-  const [todayAppointments, activeConsultations, weekRows, pendingReviews, scheduleRows, recentRows, links, doctor] = await Promise.all([
+  const [todayAppointments, activeConsultations, weekRows, scheduleRows, recentRows, links, doctor] = await Promise.all([
     db.collection("consultations").countDocuments({
       doctor_id: doctorObjectId,
       created_at: { $gte: todayStart.toISOString(), $lte: todayEnd.toISOString() },
     }),
     db.collection("consultations").countDocuments({ doctor_id: doctorObjectId, status: "active" }),
     db.collection("consultations").find({ doctor_id: doctorObjectId, created_at: { $gte: weekStart.toISOString() } }).project({ patient_id: 1, created_at: 1 }).toArray(),
-    db.collection("emr_entries").countDocuments({ requires_review: true }),
     db.collection("consultations").find({
       doctor_id: doctorObjectId,
       created_at: { $gte: todayStart.toISOString(), $lte: todayEnd.toISOString() },
@@ -190,26 +189,25 @@ export default async function DoctorDashboardPage() {
   const recentPatients = Array.from(recentPatientsMap.values());
 
   const now = new Date();
-  const greeting = now.getHours() < 12 ? "Good morning" : now.getHours() < 18 ? "Good afternoon" : "Good evening";
   const doctorName = String((doctor as any)?.name ?? "Doctor");
 
   return (
-    <div className="space-y-6">
-      <section className="flex flex-wrap items-center justify-between gap-3">
+    <div className="space-y-4">
+      <section className="flex flex-wrap items-center justify-between gap-2 pt-1">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-[hsl(var(--text-primary))]">{greeting}, {doctorName}</h2>
-          <p className="text-sm text-[hsl(var(--text-muted))]">
+          <h2 className="text-xl font-semibold tracking-tight text-[hsl(var(--text-primary))]">{doctorName}</h2>
+          <p className="text-xs text-[hsl(var(--text-muted))]">
             {now.toLocaleDateString("en-IN", {
-              weekday: "long",
+              weekday: "short",
               day: "2-digit",
-              month: "long",
+              month: "short",
               year: "numeric",
             })}
           </p>
         </div>
       </section>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Today&apos;s Appointments</CardDescription>
@@ -238,16 +236,6 @@ export default async function DoctorDashboardPage() {
           <CardContent className="pt-0 text-xs text-[hsl(var(--text-muted))]">
             <Users className="mr-1 inline h-3.5 w-3.5" />
             Unique patients in last 7 days
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Pending Reviews</CardDescription>
-            <CardTitle className="text-2xl">{pendingReviews}</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0 text-xs text-[hsl(var(--text-muted))]">
-            <ClipboardList className="mr-1 inline h-3.5 w-3.5" />
-            EMR notes awaiting review
           </CardContent>
         </Card>
       </section>

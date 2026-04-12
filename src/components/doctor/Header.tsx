@@ -2,7 +2,7 @@
 
 import { Bell, ChevronDown, Menu, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { ThemeToggle } from "@/src/components/theme/ThemeToggle";
 import { Avatar } from "@/src/components/ui/Avatar";
@@ -12,14 +12,13 @@ const PAGE_TITLES: Record<string, string> = {
   "/doctor": "Dashboard",
   "/doctor/patients": "Patients",
   "/doctor/consultations": "Consultations",
-  "/doctor/history": "History",
   "/doctor/settings": "Settings",
 };
 
 function getPageTitle(pathname: string) {
   if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
   const prefix = Object.keys(PAGE_TITLES).find((route) => route !== "/doctor" && pathname.startsWith(`${route}/`));
-  return prefix ? PAGE_TITLES[prefix] : "Doctor Workspace";
+  return prefix ? PAGE_TITLES[prefix] : "MediFlow";
 }
 
 interface HeaderProps {
@@ -32,27 +31,8 @@ interface HeaderProps {
 export function Header({ collapsed, onToggleCollapsed, onOpenMobileMenu, doctorName }: HeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [now, setNow] = useState<Date>(new Date());
   const [menuOpen, setMenuOpen] = useState(false);
   const pageTitle = useMemo(() => getPageTitle(pathname), [pathname]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const formattedTime = new Intl.DateTimeFormat("en-IN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(now);
-
-  const formattedDate = new Intl.DateTimeFormat("en-IN", {
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(now);
 
   const handleLogout = async () => {
     setMenuOpen(false);
@@ -65,7 +45,7 @@ export function Header({ collapsed, onToggleCollapsed, onOpenMobileMenu, doctorN
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-[hsl(var(--border))] bg-[hsl(var(--bg-primary)/0.88)] px-4 backdrop-blur md:px-6">
+    <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-[hsl(var(--border))] bg-[hsl(var(--bg-primary)/0.88)] px-4 backdrop-blur md:px-6">
       <div className="flex items-center gap-2 md:gap-3">
         <button
           onClick={onOpenMobileMenu}
@@ -82,10 +62,7 @@ export function Header({ collapsed, onToggleCollapsed, onOpenMobileMenu, doctorN
           {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </button>
         <div>
-          <h1 className="text-base font-semibold text-[hsl(var(--text-primary))] md:text-lg">{pageTitle}</h1>
-          <p className="hidden text-xs text-[hsl(var(--text-muted))] sm:block">
-            {formattedDate} · {formattedTime}
-          </p>
+          <h1 className="text-sm font-semibold text-[hsl(var(--text-primary))] md:text-base">{pageTitle}</h1>
         </div>
       </div>
 

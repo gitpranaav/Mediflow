@@ -219,21 +219,15 @@ export function PatientHistoryPanel({ consultationId, patientId }: { consultatio
     const active = editing?.scope === scope && editing.key === key;
     const resolved = showValue(scope, key, value);
     if (active) {
+      const editorRows = multiline ? 4 : Math.min(Math.max(editorValue.split(/\n|,/).length, 2), 5);
       return (
-        <div className="space-y-1">
-          {multiline ? (
-            <textarea
-              className="min-h-[3.5rem] w-full rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] px-2 py-1.5 text-sm text-[hsl(var(--text-primary))]"
-              value={editorValue}
-              onChange={(e) => setEditorValue(e.target.value)}
-            />
-          ) : (
-            <input
-              className="h-8 w-full rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] px-2 text-sm text-[hsl(var(--text-primary))]"
-              value={editorValue}
-              onChange={(e) => setEditorValue(e.target.value)}
-            />
-          )}
+        <div className="space-y-1 rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-secondary)/0.35)] p-2">
+          <textarea
+            rows={editorRows}
+            className="w-full resize-y rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--accent)/0.25)] bg-[hsl(var(--bg-card))] px-2 py-1.5 text-sm leading-5 text-[hsl(var(--text-primary))] shadow-[var(--shadow-sm)] outline-none"
+            value={editorValue}
+            onChange={(e) => setEditorValue(e.target.value)}
+          />
           <div className="flex items-center gap-2">
             <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-xs" onClick={commitEdit}>
               Done
@@ -249,7 +243,7 @@ export function PatientHistoryPanel({ consultationId, patientId }: { consultatio
     const text = Array.isArray(resolved) ? listOrDash(resolved) : multiline ? textOrDash(resolved) : textOrDash(resolved);
     return (
       <p
-        className="cursor-text whitespace-pre-wrap text-[hsl(var(--text-primary))]"
+        className="cursor-text whitespace-pre-wrap break-words text-[13px] leading-5 text-[hsl(var(--text-primary))]"
         onDoubleClick={() => startEdit(scope, key, resolved)}
         title="Double-click to edit"
       >
@@ -260,133 +254,105 @@ export function PatientHistoryPanel({ consultationId, patientId }: { consultatio
 
   return (
     <div className="space-y-3">
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between gap-2">
-            <CardTitle className="text-base">Patient History</CardTitle>
-            <div className="flex items-center gap-2">
+      <Card className="overflow-hidden border-[hsl(var(--accent)/0.18)] bg-[linear-gradient(180deg,hsl(var(--accent)/0.08)_0%,hsl(var(--bg-card))_38%)] shadow-[var(--shadow-sm)]">
+        <CardHeader className="border-b border-[hsl(var(--accent)/0.12)] bg-[hsl(var(--accent)/0.04)] pb-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1">
+              <CardTitle className="text-sm tracking-tight text-[hsl(var(--text-primary))]">Patient History</CardTitle>
+              <p className="text-[11px] text-[hsl(var(--text-muted))]">Editable history, specialty notes, and latest encounter context.</p>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {data?.doctor?.specialty_code ? <Badge variant="outline">{data.doctor.specialty_code}</Badge> : null}
               {saveMsg ? <span className="text-xs text-[hsl(var(--text-muted))]">{saveMsg}</span> : null}
               {hasPending ? (
-                <Button type="button" size="sm" className="h-7 px-2 text-xs" onClick={saveChanges} loading={saving}>
-                  Save
+                <Button type="button" size="sm" className="h-7 px-3 text-xs shadow-[var(--shadow-sm)]" onClick={saveChanges} loading={saving}>
+                  Save changes
                 </Button>
               ) : null}
-              {data?.doctor?.specialty_code ? <Badge variant="outline">{data.doctor.specialty_code}</Badge> : null}
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
           {error ? <p className="text-xs text-[hsl(var(--danger))]">{error}</p> : null}
-          <p className="text-[10px] text-[hsl(var(--text-muted))]">Double-click any history field to edit, then click Save.</p>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-[hsl(var(--text-muted))]">Double-click any history field to edit, then click Save.</p>
 
-          <div className="space-y-1 text-sm">
-            <p className="text-xs font-medium text-[hsl(var(--text-primary))]">Core history</p>
-          </div>
-
-          <div className="space-y-1 text-sm">
-            <p className="text-xs text-[hsl(var(--text-muted))]">Allergies</p>
-            {renderEditable("core", "allergies", data?.history?.allergies)}
-          </div>
-
-          <div className="space-y-1 text-sm">
-            <p className="text-xs text-[hsl(var(--text-muted))]">Problem list</p>
-            {renderEditable("core", "problem_list", data?.history?.problem_list)}
-          </div>
-
-          <div className="space-y-1 text-sm">
-            <p className="text-xs text-[hsl(var(--text-muted))]">Past surgeries</p>
-            {renderEditable("core", "past_surgeries", data?.history?.past_surgeries)}
-          </div>
-
-          <div className="space-y-1 text-sm">
-            <p className="text-xs text-[hsl(var(--text-muted))]">Family history</p>
-            {renderEditable("core", "family_history", data?.history?.family_history, true)}
-          </div>
-
-          <div className="space-y-1 text-sm">
-            <p className="text-xs text-[hsl(var(--text-muted))]">Social history</p>
-            {renderEditable("core", "social_history", data?.history?.social_history, true)}
-          </div>
-
-          <div className="space-y-1 text-sm">
-            <p className="text-xs text-[hsl(var(--text-muted))]">Immunizations</p>
-            {renderEditable("core", "immunizations", data?.history?.immunizations)}
-          </div>
-
-          <div className="space-y-1 text-sm">
-            <p className="text-xs text-[hsl(var(--text-muted))]">Active meds</p>
-            {renderEditable("core", "active_meds", data?.history?.active_meds)}
-          </div>
-
-          {data?.history?.id ? (
-            <div className="space-y-2 rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-secondary))] p-3">
-              <p className="text-xs font-medium text-[hsl(var(--text-primary))]">Record</p>
-              <div className="grid gap-2 text-xs">
-                <div>
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">History id</p>
-                  <p className="break-all font-mono text-[hsl(var(--text-secondary))]">{data.history.id}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">Patient id</p>
-                  <p className="break-all font-mono text-[hsl(var(--text-secondary))]">{data.history.patient_id ?? "—"}</p>
-                </div>
-                <div className="grid gap-1 sm:grid-cols-2">
-                  <div>
-                    <p className="text-[10px] text-[hsl(var(--text-muted))]">Created</p>
-                    <p className="text-[hsl(var(--text-secondary))]">{formatDateTime(data.history.created_at)}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-[hsl(var(--text-muted))]">Updated</p>
-                    <p className="text-[hsl(var(--text-secondary))]">{formatDateTime(data.history.updated_at)}</p>
-                  </div>
-                </div>
+          <div className="space-y-3 rounded-[var(--radius)] border border-[hsl(var(--accent)/0.14)] bg-[hsl(var(--accent)/0.04)] p-3 shadow-[var(--shadow-sm)]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[hsl(var(--text-secondary))]">Core history</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="group rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--accent)/0.12)] bg-[linear-gradient(180deg,hsl(var(--bg-card))_0%,hsl(var(--bg-secondary)/0.18)_100%)] p-3 shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)]">
+                <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Allergies</p>
+                {renderEditable("core", "allergies", data?.history?.allergies)}
+              </div>
+              <div className="group rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--accent)/0.12)] bg-[linear-gradient(180deg,hsl(var(--bg-card))_0%,hsl(var(--bg-secondary)/0.18)_100%)] p-3 shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)]">
+                <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Problem list</p>
+                {renderEditable("core", "problem_list", data?.history?.problem_list)}
+              </div>
+              <div className="group rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--accent)/0.12)] bg-[linear-gradient(180deg,hsl(var(--bg-card))_0%,hsl(var(--bg-secondary)/0.18)_100%)] p-3 shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)]">
+                <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Past surgeries</p>
+                {renderEditable("core", "past_surgeries", data?.history?.past_surgeries)}
+              </div>
+              <div className="group rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--accent)/0.12)] bg-[linear-gradient(180deg,hsl(var(--bg-card))_0%,hsl(var(--bg-secondary)/0.18)_100%)] p-3 shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)]">
+                <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Immunizations</p>
+                {renderEditable("core", "immunizations", data?.history?.immunizations)}
+              </div>
+              <div className="group rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--accent)/0.12)] bg-[linear-gradient(180deg,hsl(var(--bg-card))_0%,hsl(var(--bg-secondary)/0.18)_100%)] p-3 shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)] sm:col-span-2">
+                <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Family history</p>
+                {renderEditable("core", "family_history", data?.history?.family_history, true)}
+              </div>
+              <div className="group rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--accent)/0.12)] bg-[linear-gradient(180deg,hsl(var(--bg-card))_0%,hsl(var(--bg-secondary)/0.18)_100%)] p-3 shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)] sm:col-span-2">
+                <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Social history</p>
+                {renderEditable("core", "social_history", data?.history?.social_history, true)}
+              </div>
+              <div className="group rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--accent)/0.12)] bg-[linear-gradient(180deg,hsl(var(--bg-card))_0%,hsl(var(--bg-secondary)/0.18)_100%)] p-3 shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)] sm:col-span-2">
+                <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Active meds</p>
+                {renderEditable("core", "active_meds", data?.history?.active_meds)}
               </div>
             </div>
-          ) : null}
+          </div>
 
           {data?.specialty_history ? (
-            <div className="space-y-2 rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-secondary))] p-3">
-              <p className="text-xs font-medium text-[hsl(var(--text-primary))]">{titleFromSpecialtyCode(data?.doctor?.specialty_code)}</p>
+            <div className="space-y-3 rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[linear-gradient(180deg,hsl(var(--bg-secondary)/0.34)_0%,hsl(var(--bg-card))_100%)] p-3 shadow-[var(--shadow-sm)]">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[hsl(var(--text-secondary))]">{titleFromSpecialtyCode(data?.doctor?.specialty_code)}</p>
               <div className="grid gap-2 sm:grid-cols-2">
-                <div>
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">Last consultation</p>
-                  <p className="text-sm text-[hsl(var(--text-primary))]">{textOrDash(data.specialty_history?.last_consultation_at)}</p>
+                <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Last consultation</p>
+                  <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">{textOrDash(data.specialty_history?.last_consultation_at)}</p>
                 </div>
-                <div>
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">Last diagnosis</p>
-                  <p className="text-sm text-[hsl(var(--text-primary))]">{textOrDash(data.specialty_history?.last_diagnosis)}</p>
+                <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Last diagnosis</p>
+                  <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">{textOrDash(data.specialty_history?.last_diagnosis)}</p>
                 </div>
-                <div className="sm:col-span-2">
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">Diagnoses</p>
-                  <p className="text-sm text-[hsl(var(--text-primary))]">{listOrDash(data.specialty_history?.diagnoses)}</p>
+                <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5 sm:col-span-2">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Diagnoses</p>
+                  <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">{listOrDash(data.specialty_history?.diagnoses)}</p>
                 </div>
-                <div className="sm:col-span-2">
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">Active meds</p>
-                  <p className="text-sm text-[hsl(var(--text-primary))]">{listOrDash(data.specialty_history?.active_meds)}</p>
+                <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5 sm:col-span-2">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Active meds</p>
+                  <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">{listOrDash(data.specialty_history?.active_meds)}</p>
                 </div>
               </div>
 
               {data?.doctor?.specialty_code === "gynec" ? (
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  <div>
-                    <p className="text-[10px] text-[hsl(var(--text-muted))]">LMP</p>
-                    <p className="text-sm text-[hsl(var(--text-primary))]">{data?.specialty_history?.lmp ?? "—"}</p>
+                  <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">LMP</p>
+                    <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">{data?.specialty_history?.lmp ?? "—"}</p>
                   </div>
-                  <div>
-                    <p className="text-[10px] text-[hsl(var(--text-muted))]">G/P/A/L</p>
-                    <p className="text-sm text-[hsl(var(--text-primary))]">{data?.specialty_history?.g_p_a_l ?? "—"}</p>
+                  <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">G/P/A/L</p>
+                    <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">{data?.specialty_history?.g_p_a_l ?? "—"}</p>
                   </div>
-                  <div className="sm:col-span-2">
-                    <p className="text-[10px] text-[hsl(var(--text-muted))]">Cycle history</p>
-                    <p className="text-sm text-[hsl(var(--text-primary))]">{data?.specialty_history?.cycle_history ?? "—"}</p>
+                  <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5 sm:col-span-2">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Cycle history</p>
+                    <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">{data?.specialty_history?.cycle_history ?? "—"}</p>
                   </div>
                 </div>
               ) : null}
 
               <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
                 {omitSpecialtyKeys(data.specialty_history as Record<string, unknown>).map(([key, value]) => (
-                  <div key={key} className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2">
-                    <p className="text-[10px] text-[hsl(var(--text-muted))]">{fieldLabel(key)}</p>
+                  <div key={key} className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5 shadow-[var(--shadow-sm)]">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">{fieldLabel(key)}</p>
                     {renderEditable("specialty", key, value, !Array.isArray(value))}
                   </div>
                 ))}
@@ -395,46 +361,46 @@ export function PatientHistoryPanel({ consultationId, patientId }: { consultatio
           ) : null}
 
           {data?.latest_consultation ? (
-            <div className="space-y-2 rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-secondary))] p-3">
+            <div className="space-y-3 rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[linear-gradient(180deg,hsl(var(--bg-secondary)/0.34)_0%,hsl(var(--bg-card))_100%)] p-3 shadow-[var(--shadow-sm)]">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-medium text-[hsl(var(--text-primary))]">Latest consultation</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[hsl(var(--text-secondary))]">Latest consultation</p>
                 {data.latest_consultation.visit_type ? <Badge variant="outline">{data.latest_consultation.visit_type}</Badge> : null}
               </div>
 
               <div className="grid gap-2 sm:grid-cols-2">
-                <div>
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">Date</p>
-                  <p className="text-sm text-[hsl(var(--text-primary))]">{formatDateTime(data.latest_consultation.created_at)}</p>
+                <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Date</p>
+                  <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">{formatDateTime(data.latest_consultation.created_at)}</p>
                 </div>
-                <div>
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">Status</p>
-                  <p className="text-sm text-[hsl(var(--text-primary))]">{textOrDash(data.latest_consultation.status)}</p>
+                <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Status</p>
+                  <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">{textOrDash(data.latest_consultation.status)}</p>
                 </div>
-                <div className="sm:col-span-2">
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">Chief complaint</p>
-                  <p className="text-sm text-[hsl(var(--text-primary))]">{textOrDash(data.latest_consultation.chief_complaint)}</p>
+                <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5 sm:col-span-2">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Chief complaint</p>
+                  <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">{textOrDash(data.latest_consultation.chief_complaint)}</p>
                 </div>
-                <div className="sm:col-span-2">
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">Assessment</p>
-                  <p className="text-sm text-[hsl(var(--text-primary))]">{textOrDash(data.latest_consultation.assessment)}</p>
+                <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5 sm:col-span-2">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Assessment</p>
+                  <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">{textOrDash(data.latest_consultation.assessment)}</p>
                 </div>
-                <div className="sm:col-span-2">
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">Clinical summary</p>
-                  <p className="text-sm text-[hsl(var(--text-primary))]">{textOrDash(data.latest_consultation.clinical_summary)}</p>
+                <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5 sm:col-span-2">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Clinical summary</p>
+                  <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">{textOrDash(data.latest_consultation.clinical_summary)}</p>
                 </div>
-                <div className="sm:col-span-2">
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">Patient summary</p>
-                  <p className="text-sm text-[hsl(var(--text-primary))]">{textOrDash(data.latest_consultation.patient_summary)}</p>
+                <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5 sm:col-span-2">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Patient summary</p>
+                  <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">{textOrDash(data.latest_consultation.patient_summary)}</p>
                 </div>
-                <div className="sm:col-span-2">
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">Diagnoses</p>
-                  <p className="text-sm text-[hsl(var(--text-primary))]">
+                <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5 sm:col-span-2">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Diagnoses</p>
+                  <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">
                     {listOrDash((data.latest_consultation.diagnoses ?? []).map((item) => item.diagnosis_text ?? ""))}
                   </p>
                 </div>
-                <div className="sm:col-span-2">
-                  <p className="text-[10px] text-[hsl(var(--text-muted))]">Medications</p>
-                  <p className="text-sm text-[hsl(var(--text-primary))]">
+                <div className="rounded-[calc(var(--radius)-4px)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-2.5 sm:col-span-2">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">Medications</p>
+                  <p className="text-[13px] leading-5 text-[hsl(var(--text-primary))]">
                     {listOrDash((Array.isArray(data.latest_consultation.medications) ? data.latest_consultation.medications : []).map((item) => normalizeMedicationLabel(item)))}
                   </p>
                 </div>
@@ -443,13 +409,13 @@ export function PatientHistoryPanel({ consultationId, patientId }: { consultatio
           ) : null}
 
           <div className="space-y-2">
-            <p className="text-xs font-medium text-[hsl(var(--text-primary))]">Recent summaries</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[hsl(var(--text-secondary))]">Recent summaries</p>
             <div className="space-y-2">
               {(data?.recent ?? []).length ? (
                 (data?.recent ?? []).map((row, idx) => (
-                  <div key={`${row.created_at}-${idx}`} className="rounded-[var(--radius)] border border-[hsl(var(--border))] p-2">
-                    <p className="text-xs text-[hsl(var(--text-muted))]">{formatDate(row.created_at)}</p>
-                    <p className="text-sm text-[hsl(var(--text-primary))]">{row.clinical_summary ?? "No summary"}</p>
+                  <div key={`${row.created_at}-${idx}`} className="rounded-[var(--radius)] border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] p-3 shadow-[var(--shadow-sm)]">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-[hsl(var(--text-muted))]">{formatDate(row.created_at)}</p>
+                    <p className="mt-1 text-[13px] leading-5 text-[hsl(var(--text-primary))]">{row.clinical_summary ?? "No summary"}</p>
                   </div>
                 ))
               ) : (

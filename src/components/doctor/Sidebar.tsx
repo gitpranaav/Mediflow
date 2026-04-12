@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Clock3, LayoutGrid, Settings, Stethoscope, Users, X } from "lucide-react";
+import { LayoutGrid, PanelLeftClose, PanelLeftOpen, Settings, Stethoscope, Users, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -13,7 +13,6 @@ const NAV_ITEMS = [
   { href: "/doctor", label: "Dashboard", icon: LayoutGrid },
   { href: "/doctor/patients", label: "Patients", icon: Users },
   { href: "/doctor/consultations", label: "Consultations", icon: Stethoscope },
-  { href: "/doctor/history", label: "History", icon: Clock3 },
   { href: "/doctor/settings", label: "Settings", icon: Settings },
 ];
 
@@ -21,19 +20,30 @@ interface SidebarContentProps {
   collapsed: boolean;
   doctorName: string;
   doctorSpecialization: string;
+  onToggleCollapsed?: () => void;
   onNavigate?: () => void;
   trailing?: ReactNode;
 }
 
-function SidebarContent({ collapsed, doctorName, doctorSpecialization, onNavigate, trailing }: SidebarContentProps) {
+function SidebarContent({ collapsed, doctorName, doctorSpecialization, onToggleCollapsed, onNavigate, trailing }: SidebarContentProps) {
   const pathname = usePathname();
 
   return (
     <div className="flex h-full flex-col">
-      <div className={cn("px-4 py-4", collapsed ? "px-3" : "px-5")}>
-        <p className={cn("font-semibold tracking-tight text-[hsl(var(--text-primary))]", collapsed ? "text-center text-sm" : "text-xl")}>
+      <div className={cn("flex items-center justify-between gap-2 border-b border-[hsl(var(--border))] px-4 py-3", collapsed ? "px-3" : "px-4")}>
+        <p className={cn("font-semibold tracking-tight text-[hsl(var(--text-primary))]", collapsed ? "text-center text-sm" : "text-lg")}>
           {collapsed ? "MF" : "MediFlow"}
         </p>
+        {onToggleCollapsed ? (
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--bg-secondary))]"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          </button>
+        ) : null}
       </div>
 
       <nav className="mt-2 flex-1 space-y-1 px-2">
@@ -89,11 +99,12 @@ interface SidebarProps {
   collapsed: boolean;
   mobileOpen: boolean;
   setMobileOpen: (value: boolean) => void;
+  onToggleCollapsed: () => void;
   doctorName: string;
   doctorSpecialization: string;
 }
 
-export function Sidebar({ collapsed, mobileOpen, setMobileOpen, doctorName, doctorSpecialization }: SidebarProps) {
+export function Sidebar({ collapsed, mobileOpen, setMobileOpen, onToggleCollapsed, doctorName, doctorSpecialization }: SidebarProps) {
   return (
     <>
       <motion.aside
@@ -101,7 +112,12 @@ export function Sidebar({ collapsed, mobileOpen, setMobileOpen, doctorName, doct
         transition={{ duration: 0.22, ease: "easeOut" }}
         className="hidden h-screen shrink-0 border-r border-[hsl(var(--border))] bg-[hsl(var(--bg-secondary))] lg:block"
       >
-        <SidebarContent collapsed={collapsed} doctorName={doctorName} doctorSpecialization={doctorSpecialization} />
+        <SidebarContent
+          collapsed={collapsed}
+          doctorName={doctorName}
+          doctorSpecialization={doctorSpecialization}
+          onToggleCollapsed={onToggleCollapsed}
+        />
       </motion.aside>
 
       {mobileOpen ? (

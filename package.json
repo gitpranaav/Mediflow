@@ -9,11 +9,12 @@
     "seed:core": "node scripts/seed/01_core.mjs",
     "seed:icd10": "node scripts/seed/02_icd10.mjs",
     "seed:demo": "node scripts/seed/03_demo.mjs",
+    "seed:medications": "node scripts/seed/08_medication_catalog.mjs",
     "seed:backfill:patients": "node scripts/seed/04_backfill_patient_doctor_id.mjs",
     "seed:backfill:patient_doctors": "node scripts/seed/05_backfill_patient_doctors.mjs",
     "seed:backfill:follow_up": "node scripts/seed/07_backfill_consultation_follow_up.mjs",
     "seed:demo:history": "node scripts/seed/06_history_demo.mjs",
-    "seed:all": "npm run seed:core && npm run seed:icd10 && npm run seed:demo"
+    "seed:all": "npm run seed:core && npm run seed:icd10 && npm run seed:medications && npm run seed:demo"
   },
   "dependencies": {
     "@deepgram/sdk": "^5.0.0",

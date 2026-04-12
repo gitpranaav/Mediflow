@@ -13,6 +13,7 @@ interface ConsultationRecord {
   type: string | null;
   status: string | null;
   started_at: string | null;
+  follow_up_due_at?: string | null;
   patients?: { name: string } | null;
 }
 
@@ -33,6 +34,7 @@ export default async function ConsultationPage({ params }: ConsultationPageProps
     type: consultationDoc.type ?? null,
     status: consultationDoc.status ?? null,
     started_at: consultationDoc.started_at ?? null,
+    follow_up_due_at: consultationDoc.follow_up_due_at ?? null,
     patients: patient ? { name: patient.name } : null,
   } as ConsultationRecord;
   if (!consultation) notFound();
@@ -47,6 +49,7 @@ export default async function ConsultationPage({ params }: ConsultationPageProps
       consultationType={consultation.type ?? "General"}
       initialStatus={consultation.status}
       initialStartedAt={consultation.started_at}
+      initialFollowUpDueAt={consultation.follow_up_due_at ?? null}
     />
   );
 }

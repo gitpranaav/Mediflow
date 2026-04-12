@@ -1,6 +1,5 @@
 "use client";
 
-import { Copy } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 import { Button } from "@/src/components/ui/Button";
@@ -21,12 +20,7 @@ export function TranscriptViewer({ segments, interimText }: { segments: Segment[
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-[hsl(var(--text-muted))]">Word count: {fullText.split(/\s+/).filter(Boolean).length}</p>
-        <Button size="sm" variant="secondary" iconLeft={<Copy className="h-3.5 w-3.5" />} onClick={() => navigator.clipboard.writeText(fullText)}>
-          Copy transcript
-        </Button>
-      </div>
+      <p className="text-xs text-[hsl(var(--text-muted))]">Word count: {fullText.split(/\s+/).filter(Boolean).length}</p>
       <div className="max-h-80 space-y-2 overflow-auto rounded-[var(--radius)] border border-[hsl(var(--border))] p-2">
         {segments.map((segment) => (
           <div key={segment.id} className="rounded-[calc(var(--radius)-4px)] bg-[hsl(var(--bg-secondary))] px-2 py-1.5">
