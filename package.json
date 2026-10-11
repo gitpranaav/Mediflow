@@ -6,6 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test:baseline": "node --require ./scripts/eval/register.cjs --test tests/baseline.test.cjs",
+    "eval:baseline": "node scripts/eval/baseline.cjs",
     "seed:core": "node scripts/seed/01_core.mjs",
     "seed:icd10": "node scripts/seed/02_icd10.mjs",
     "seed:demo": "node scripts/seed/03_demo.mjs",

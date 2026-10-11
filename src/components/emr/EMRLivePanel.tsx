@@ -7,6 +7,7 @@ import { Button } from "@/src/components/ui/Button";
 import { Input } from "@/src/components/ui/Input";
 import { cn } from "@/src/lib/utils";
 import { findAllergyMedicationWarnings } from "@/src/lib/clinical/allergyMedicationCheck";
+import { measureAllergyCheck } from "@/src/lib/observability/baseline";
 import type { EMRDiagnosisIcd, EMRMedication, EMRSnapshot } from "@/src/lib/emr/types";
 
 function normalizeArray(value: unknown): string[] {
@@ -290,7 +291,11 @@ export function EMRLivePanel({
   useEffect(() => {
     const debounce = window.setTimeout(() => {
       const named = (snapshotRef.current.medications ?? []).filter((m) => (m.name ?? "").trim());
-      const warnings = findAllergyMedicationWarnings(patientAllergies, named);
+      const warnings = measureAllergyCheck(
+        () => findAllergyMedicationWarnings(patientAllergies, named),
+        { path: "medications", allergy_count: patientAllergies.length, medication_count: named.length },
+        (result) => result.length,
+      );
       setAllergyBanner(warnings.length ? warnings.join(" · ") : null);
     }, 350);
     return () => window.clearTimeout(debounce);

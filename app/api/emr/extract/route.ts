@@ -4,7 +4,8 @@ import { NextResponse } from "next/server";
 
 import { getServerSession } from "@/src/lib/auth/session";
 import { logConsultationAudit } from "@/src/lib/audit/consultationLedger";
-import { EXTRACT_FULL_SYSTEM_PROMPT } from "@/src/lib/emr/extractDeltaPrompt";
+import { BASELINE_PROMPT_VERSION, buildFullExtractionRequest } from "@/src/lib/emr/extractionRequest";
+import { startExtractionMetric } from "@/src/lib/observability/baseline";
 import { normalizeMedicationsArray } from "@/src/lib/emr/normalizeMedications";
 import { buildClinicalSummary, buildPatientSummary } from "@/src/lib/emr/summaries";
 import { enrichMedicationsWithIcd } from "@/src/lib/icd/enrichMedications";
@@ -17,6 +18,7 @@ export async function POST(request: Request) {
   if (!["doctor", "receptionist"].includes(String(session.role))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  const metric = startExtractionMetric("full");
   try {
     const body = await request.json();
     const apiKey = process.env.GROQ_API_KEY;
@@ -25,24 +27,10 @@ export async function POST(request: Request) {
     }
 
     const groq = new Groq({ apiKey });
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: EXTRACT_FULL_SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            transcript_text: body.transcript_text,
-            patient_context: body.patient_context ?? {},
-          }),
-        },
-      ],
-      temperature: 0.05,
-    });
+    const extractionRequest = buildFullExtractionRequest(body);
+    metric.providerStart(extractionRequest, BASELINE_PROMPT_VERSION);
+    const completion = await groq.chat.completions.create(extractionRequest);
+    metric.providerEnd(completion.usage);
 
     const parsed = JSON.parse(completion.choices[0]?.message?.content ?? "{}");
     const db = await getDb();
@@ -71,6 +59,7 @@ export async function POST(request: Request) {
     snapshotForStore.clinical_summary = snapshotForStore.clinical_summary ?? buildClinicalSummary(snapshotForStore);
     snapshotForStore.patient_summary = snapshotForStore.patient_summary ?? buildPatientSummary(snapshotForStore);
 
+    metric.stage("persistence");
     const emrResult = await db.collection("emr_entries").findOneAndUpdate(
       { consultation_id: consultationId },
       {
@@ -114,6 +103,7 @@ export async function POST(request: Request) {
       }
     }
 
+    metric.stage("audit");
     await logConsultationAudit(db, {
       consultationId,
       patientId: consultation?.patient_id ?? null,
@@ -130,8 +120,11 @@ export async function POST(request: Request) {
       },
     });
 
+    metric.success();
     return NextResponse.json({ ...parsed, snapshot: snapshotForStore });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Extraction failed" }, { status: 500 });
+  } finally {
+    metric.finish();
   }
 }

@@ -14,6 +14,8 @@ import { TranscriptViewer } from "@/src/components/stt/TranscriptViewer";
 import { PatientHistoryPanel } from "@/src/components/history/PatientHistoryPanel";
 import { useSTT } from "@/src/hooks/useSTT";
 import type { EMRSnapshot, TranscriptSegment } from "@/src/lib/emr/types";
+import { detectRealtimeAllergyAlert } from "@/src/lib/clinical/realtimeAllergyAlert";
+import { measureAllergyCheck } from "@/src/lib/observability/baseline";
 
 interface WorkspaceProps {
   consultationId: string;
@@ -34,27 +36,6 @@ type AuditEvent = {
   created_at: string | null;
   changed_paths: string[];
 };
-
-function normalize(value: string) {
-  return value.toLowerCase().trim();
-}
-
-function detectRealtimeAllergyAlert(allergies: string[], liveTranscript: string): string | null {
-  const text = normalize(liveTranscript);
-  if (!text) return null;
-
-  const allergyBlob = allergies.map((item) => normalize(String(item))).filter(Boolean).join(" ");
-  if (!allergyBlob) return null;
-
-  const hasPenicillinAllergy = /penicillin|pcn|beta[-\s]?lactam|β[-\s]?lactam/.test(allergyBlob);
-  const mentionsPenicillinFamily = /penic[a-z]*|amoxi[a-z]*|ampi[a-z]*|piper[a-z]*|augmentin|clavulanate|cef[a-z]+/.test(text);
-
-  if (hasPenicillinAllergy && mentionsPenicillinFamily) {
-    return "Live allergy alert: beta-lactam/penicillin family drug mentioned in transcript. Verify before prescribing.";
-  }
-
-  return null;
-}
 
 function formatElapsed(seconds: number) {
   const h = Math.floor(seconds / 3600)
@@ -388,7 +369,14 @@ export function ConsultationWorkspace({
   }, []);
 
   const liveAllergyAlert = useMemo(
-    () => detectRealtimeAllergyAlert(patientAllergies, `${stt.fullText ?? ""} ${stt.interimText ?? ""}`),
+    () => {
+      const text = `${stt.fullText ?? ""} ${stt.interimText ?? ""}`;
+      return measureAllergyCheck(
+        () => detectRealtimeAllergyAlert(patientAllergies, text),
+        { path: "transcript", input_chars: text.length, allergy_count: patientAllergies.length },
+        (result) => result ? 1 : 0,
+      );
+    },
     [patientAllergies, stt.fullText, stt.interimText]
   );
 

@@ -4,7 +4,8 @@ import { NextResponse } from "next/server";
 
 import { getServerSession } from "@/src/lib/auth/session";
 import { logConsultationAudit } from "@/src/lib/audit/consultationLedger";
-import { EXTRACT_DELTA_SYSTEM_PROMPT } from "@/src/lib/emr/extractDeltaPrompt";
+import { BASELINE_PROMPT_VERSION, buildDeltaExtractionRequest } from "@/src/lib/emr/extractionRequest";
+import { startExtractionMetric } from "@/src/lib/observability/baseline";
 import { enrichMedicationsWithIcd } from "@/src/lib/icd/enrichMedications";
 import { applyEMROps } from "@/src/lib/emr/merge";
 import { buildClinicalSummary, buildPatientSummary } from "@/src/lib/emr/summaries";
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const metric = startExtractionMetric("delta");
   try {
     const body = (await request.json()) as {
       consultation_id?: string;
@@ -66,35 +68,17 @@ export async function POST(request: Request) {
     const consultationId = new ObjectId(body.consultation_id);
 
     if (!segmentsDelta.length) {
+      metric.skip();
       return NextResponse.json({ operations: [], snapshot: body.emr_snapshot ?? {}, new_cursor: body.cursor ?? null });
     }
 
     const groq = getGroq();
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      temperature: 0.05,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: EXTRACT_DELTA_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: JSON.stringify({
-            segments_delta: segmentsDelta.map((s) => ({
-              id: s.id,
-              text: s.text,
-              confidence: s.confidence ?? null,
-              language: s.language ?? null,
-              start_ms: s.start_ms ?? null,
-              end_ms: s.end_ms ?? null,
-            })),
-            emr_snapshot: body.emr_snapshot ?? {},
-            patient_allergies: Array.isArray(body.patient_allergies)
-              ? body.patient_allergies.map((a) => String(a).trim()).filter(Boolean)
-              : [],
-          }),
-        },
-      ],
+    const extractionRequest = buildDeltaExtractionRequest({
+      segments_delta: segmentsDelta, emr_snapshot: body.emr_snapshot, patient_allergies: body.patient_allergies,
     });
+    metric.providerStart(extractionRequest, BASELINE_PROMPT_VERSION, segmentsDelta.length);
+    const completion = await groq.chat.completions.create(extractionRequest);
+    metric.providerEnd(completion.usage);
 
     const parsed = JSON.parse(completion.choices[0]?.message?.content ?? "{}") as { operations?: EMROp[] };
     const operations = Array.isArray(parsed.operations) ? parsed.operations : [];
@@ -112,6 +96,7 @@ export async function POST(request: Request) {
       last_final_index: typeof body.cursor?.last_final_index === "number" ? body.cursor.last_final_index + segmentsDelta.length : segmentsDelta.length - 1,
     };
 
+    metric.stage("persistence");
     await db.collection("emr_entries").updateOne(
       { consultation_id: consultationId },
       {
@@ -130,6 +115,7 @@ export async function POST(request: Request) {
     );
 
     const consultation = await db.collection("consultations").findOne({ _id: consultationId }, { projection: { patient_id: 1 } });
+    metric.stage("audit");
     await logConsultationAudit(db, {
       consultationId,
       patientId: consultation?.patient_id ?? null,
@@ -147,6 +133,7 @@ export async function POST(request: Request) {
       },
     });
 
+    metric.success(operations.length);
     return NextResponse.json({ operations, snapshot: merged, new_cursor: newCursor });
   } catch (error) {
     const parsed = parseProviderError(error);
@@ -154,6 +141,8 @@ export async function POST(request: Request) {
       { error: parsed.message, error_code: parsed.code, retryable: parsed.retryable },
       { status: parsed.status }
     );
+  } finally {
+    metric.finish();
   }
 }
 

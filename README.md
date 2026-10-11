@@ -64,6 +64,12 @@ npm run dev
 
 http://localhost:3000
 
+## Baseline evaluation
+
+Run `npm run test:baseline` for instrumentation tests and `npm run eval:baseline`
+for an offline synthetic allergy-alert replay. Optional live Groq replay, metric
+flags, scoring definitions, and limitations are documented in [eval/README.md](eval/README.md).
+
 ## Team
 
 - Jayraj Rathi
